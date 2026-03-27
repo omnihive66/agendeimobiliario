@@ -5,12 +5,11 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
 
 export async function transcribeAudioFromUrl(audioUrl: string): Promise<string> {
   try {
-    // Baixa o áudio como buffer
+    // Baixa o áudio como arraybuffer
     const response = await axios.get(audioUrl, { responseType: 'arraybuffer' })
-    const buffer = Buffer.from(response.data)
 
-    // Cria um File a partir do buffer (necessário para Groq SDK)
-    const file = new File([buffer], 'audio.ogg', { type: 'audio/ogg' })
+    // Uint8Array garante compatibilidade com o construtor de File (sem SharedArrayBuffer)
+    const file = new File([new Uint8Array(response.data)], 'audio.ogg', { type: 'audio/ogg' })
 
     const transcription = await groq.audio.transcriptions.create({
       file,
@@ -28,7 +27,8 @@ export async function transcribeAudioFromUrl(audioUrl: string): Promise<string> 
 
 export async function transcribeAudioFromBuffer(buffer: Buffer, mimeType = 'audio/ogg'): Promise<string> {
   try {
-    const file = new File([buffer], 'audio.ogg', { type: mimeType })
+    // Uint8Array garante compatibilidade com o construtor de File (sem SharedArrayBuffer)
+    const file = new File([new Uint8Array(buffer)], 'audio.ogg', { type: mimeType })
 
     const transcription = await groq.audio.transcriptions.create({
       file,
