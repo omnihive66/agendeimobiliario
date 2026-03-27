@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 
 // ─── Tipos das tabelas (para TypeScript inferir campos das queries) ────────────
 export type SpinStage = 'S' | 'P' | 'I' | 'N' | 'DONE'
@@ -75,9 +75,9 @@ type Database = {
 // ─── Lazy singleton ─────────────────────────────────────────────────────────
 // Não inicializa na importação do módulo para não quebrar o build do Next.js
 // quando as env vars não estão presentes (fase de análise estática).
-let _client: ReturnType<typeof createClient<Database>> | null = null
+let _client: SupabaseClient<Database> | null = null
 
-function getClient() {
+function getClient(): SupabaseClient<Database> {
   if (!_client) {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -88,7 +88,7 @@ function getClient() {
 }
 
 // Proxy mantém a mesma API sem inicializar na importação
-export const supabase = new Proxy({} as ReturnType<typeof createClient<Database>>, {
+export const supabase = new Proxy({} as SupabaseClient<Database>, {
   get(_target, prop) {
     return (getClient() as any)[prop]
   }
