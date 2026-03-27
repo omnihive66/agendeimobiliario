@@ -1,11 +1,24 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const serviceKey   = process.env.SUPABASE_SERVICE_ROLE_KEY!
+// Lazy singleton — não inicializa no topo do módulo para não quebrar o build
+// do Next.js quando as env vars não estão presentes (ex: fase de análise estática)
+let _client: ReturnType<typeof createClient> | null = null
 
-// Cliente com service role (server-side apenas)
-export const supabase = createClient(supabaseUrl, serviceKey, {
-  auth: { persistSession: false }
+function getClient() {
+  if (!_client) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!url || !key) throw new Error('NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios')
+    _client = createClient(url, key, { auth: { persistSession: false } })
+  }
+  return _client
+}
+
+// Proxy mantém a mesma API (supabase.from(...)) sem inicializar na importação
+export const supabase = new Proxy({} as ReturnType<typeof createClient>, {
+  get(_target, prop) {
+    return (getClient() as any)[prop]
+  }
 })
 
 // ─── Tipos ────────────────────────────────────────────────────
