@@ -1,27 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Lazy singleton — não inicializa no topo do módulo para não quebrar o build
-// do Next.js quando as env vars não estão presentes (ex: fase de análise estática)
-let _client: ReturnType<typeof createClient> | null = null
-
-function getClient() {
-  if (!_client) {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!url || !key) throw new Error('NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios')
-    _client = createClient(url, key, { auth: { persistSession: false } })
-  }
-  return _client
-}
-
-// Proxy mantém a mesma API (supabase.from(...)) sem inicializar na importação
-export const supabase = new Proxy({} as ReturnType<typeof createClient>, {
-  get(_target, prop) {
-    return (getClient() as any)[prop]
-  }
-})
-
-// ─── Tipos ────────────────────────────────────────────────────
+// ─── Tipos das tabelas (para TypeScript inferir campos das queries) ────────────
 export type SpinStage = 'S' | 'P' | 'I' | 'N' | 'DONE'
 
 export interface Lead {
@@ -59,7 +38,63 @@ export interface Agendamento {
   created_at: string
 }
 
-// ─── Helpers ──────────────────────────────────────────────────
+interface ConfigRow {
+  key: string
+  value: string
+  updated_at: string
+}
+
+// ─── Database type — necessário para TypeScript inferir campos das queries ─────
+type Database = {
+  public: {
+    Tables: {
+      leads: {
+        Row: Lead
+        Insert: Omit<Lead, 'id' | 'created_at' | 'updated_at'> & { id?: string }
+        Update: Partial<Omit<Lead, 'id'>>
+      }
+      mensagens: {
+        Row: Mensagem
+        Insert: Omit<Mensagem, 'id' | 'created_at'> & { id?: string }
+        Update: Partial<Omit<Mensagem, 'id'>>
+      }
+      agendamentos: {
+        Row: Agendamento
+        Insert: Omit<Agendamento, 'id' | 'corretor_notif' | 'created_at'> & { id?: string; corretor_notif?: boolean }
+        Update: Partial<Omit<Agendamento, 'id'>>
+      }
+      config: {
+        Row: ConfigRow
+        Insert: ConfigRow
+        Update: Partial<ConfigRow>
+      }
+    }
+  }
+}
+
+// ─── Lazy singleton ─────────────────────────────────────────────────────────
+// Não inicializa na importação do módulo para não quebrar o build do Next.js
+// quando as env vars não estão presentes (fase de análise estática).
+let _client: ReturnType<typeof createClient<Database>> | null = null
+
+function getClient() {
+  if (!_client) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!url || !key) throw new Error('NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios')
+    _client = createClient<Database>(url, key, { auth: { persistSession: false } })
+  }
+  return _client
+}
+
+// Proxy mantém a mesma API sem inicializar na importação
+export const supabase = new Proxy({} as ReturnType<typeof createClient<Database>>, {
+  get(_target, prop) {
+    return (getClient() as any)[prop]
+  }
+})
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 export async function getLead(phone: string): Promise<Lead | null> {
   const { data } = await supabase
@@ -107,7 +142,7 @@ export async function saveMessage(
 export async function createAgendamento(data: Omit<Agendamento, 'id' | 'corretor_notif' | 'status' | 'created_at'>) {
   const { data: agend, error } = await supabase
     .from('agendamentos')
-    .insert({ ...data, status: 'pendente', corretor_notif: false })
+    .insert({ ...data, status: 'pendente' as const, corretor_notif: false })
     .select()
     .single()
   if (error) throw error
