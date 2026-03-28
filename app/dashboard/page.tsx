@@ -64,12 +64,15 @@ interface Mensagem {
   created_at?: string | null
 }
 
+interface FieldInfo { set: boolean; source: 'env' | 'config' | null }
 interface Settings {
+  supabase_ready: boolean
   zapi_instance_id: string
-  zapi_token_set: boolean
-  zapi_client_token_set: boolean
-  groq_api_key_set: boolean
-  openai_api_key_set: boolean
+  zapi_instance_source: FieldInfo
+  zapi_token_info: FieldInfo
+  zapi_client_token_info: FieldInfo
+  groq_api_key_info: FieldInfo
+  openai_api_key_info: FieldInfo
   ai_model: string
 }
 
@@ -266,10 +269,12 @@ export default function Dashboard() {
     setCfgLoading(true)
     try {
       const r = await fetch('/api/settings')
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const d: Settings = await r.json()
       setCfgSettings(d)
-      setCfgForm(prev => ({ ...prev, ai_model: d.ai_model, zapi_instance_id: d.zapi_instance_id }))
-    } catch {
+      setCfgForm(prev => ({ ...prev, ai_model: d.ai_model, zapi_instance_id: d.zapi_instance_id || prev.zapi_instance_id }))
+    } catch (e: any) {
+      setCfgMsg(`❌ Erro ao carregar: ${e.message}`)
       setCfgSettings(null)
     } finally {
       setCfgLoading(false)
@@ -854,24 +859,27 @@ export default function Dashboard() {
                       placeholder="Ex: 3F0C30F3B41441EDB3496EB5514D2922"
                       style={inputStyle}
                     />
+                    {cfgSettings && <KeyStatus info={cfgSettings.zapi_instance_source} />}
                   </FieldRow>
-                  <FieldRow label={`Token ${cfgSettings?.zapi_token_set ? '(salvo ✓)' : '(não configurado)'}`}>
+                  <FieldRow label="Token">
                     <input
                       type="password"
                       value={cfgForm.zapi_token}
                       onChange={e => setCfgForm(p => ({ ...p, zapi_token: e.target.value }))}
-                      placeholder="Deixe em branco para manter o atual"
+                      placeholder={cfgSettings?.zapi_token_info.set ? '••••••••  (já configurado — cole para alterar)' : 'Informe o Token do Z-API'}
                       style={inputStyle}
                     />
+                    {cfgSettings && <KeyStatus info={cfgSettings.zapi_token_info} />}
                   </FieldRow>
-                  <FieldRow label={`API Key ${cfgSettings?.zapi_client_token_set ? '(salvo ✓)' : '(não configurada)'}`}>
+                  <FieldRow label="API Key">
                     <input
                       type="password"
                       value={cfgForm.zapi_client_token}
                       onChange={e => setCfgForm(p => ({ ...p, zapi_client_token: e.target.value }))}
-                      placeholder="Deixe em branco para manter a atual"
+                      placeholder={cfgSettings?.zapi_client_token_info.set ? '••••••••  (já configurada — cole para alterar)' : 'Informe a API Key do Z-API'}
                       style={inputStyle}
                     />
+                    {cfgSettings && <KeyStatus info={cfgSettings.zapi_client_token_info} />}
                   </FieldRow>
 
                   {/* Botões Z-API */}
@@ -918,26 +926,33 @@ export default function Dashboard() {
 
                 {/* ── Seção Chaves de API ─────────────── */}
                 <Section title="Chaves de API">
-                  <FieldRow label={`GROQ API Key ${cfgSettings?.groq_api_key_set ? '(salva ✓)' : '(não configurada)'}`}>
+                  {!cfgSettings?.supabase_ready && (
+                    <div style={{ background: '#2a1a00', border: '1px solid #7c3d00', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: '#fb923c' }}>
+                      ⚠️ <strong>Supabase não configurado no Vercel.</strong> Adicione <code>NEXT_PUBLIC_SUPABASE_URL</code> e <code>SUPABASE_SERVICE_ROLE_KEY</code> nas variáveis de ambiente do Vercel para poder salvar configurações pelo painel. As chaves abaixo mostram o status das env vars atuais.
+                    </div>
+                  )}
+                  <FieldRow label="GROQ API Key">
                     <input
                       type="password"
                       value={cfgForm.groq_api_key}
                       onChange={e => setCfgForm(p => ({ ...p, groq_api_key: e.target.value }))}
-                      placeholder="Deixe em branco para manter a atual"
+                      placeholder={cfgSettings?.groq_api_key_info.set ? '••••••••  (já configurada — cole para alterar)' : 'Informe a chave da API Groq'}
                       style={inputStyle}
                     />
+                    {cfgSettings && <KeyStatus info={cfgSettings.groq_api_key_info} />}
                   </FieldRow>
-                  <FieldRow label={`OpenAI API Key ${cfgSettings?.openai_api_key_set ? '(salva ✓)' : '(não configurada)'}`}>
+                  <FieldRow label="OpenAI API Key">
                     <input
                       type="password"
                       value={cfgForm.openai_api_key}
                       onChange={e => setCfgForm(p => ({ ...p, openai_api_key: e.target.value }))}
-                      placeholder="Deixe em branco para manter a atual"
+                      placeholder={cfgSettings?.openai_api_key_info.set ? '••••••••  (já configurada — cole para alterar)' : 'Informe a chave da API OpenAI'}
                       style={inputStyle}
                     />
+                    {cfgSettings && <KeyStatus info={cfgSettings.openai_api_key_info} />}
                   </FieldRow>
                   <p style={{ fontSize: 12, color: '#4b5563', marginTop: 8 }}>
-                    As chaves aqui sobrescrevem as variáveis de ambiente do Vercel para este agente.
+                    Chaves salvas aqui sobrescrevem as variáveis de ambiente do Vercel.
                   </p>
                 </Section>
 
@@ -962,6 +977,18 @@ export default function Dashboard() {
 
 // ─── Componentes auxiliares ───────────────────────────────────
 
+function KeyStatus({ info }: { info: FieldInfo }) {
+  if (!info.set) return (
+    <div style={{ fontSize: 11, color: '#f87171', marginTop: 4 }}>❌ Não configurada</div>
+  )
+  if (info.source === 'env') return (
+    <div style={{ fontSize: 11, color: '#60a5fa', marginTop: 4 }}>✅ Configurada via Vercel (env var)</div>
+  )
+  return (
+    <div style={{ fontSize: 11, color: '#4ade80', marginTop: 4 }}>✅ Configurada via painel (Supabase)</div>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ background: '#111811', border: '1px solid #1a3a1a', borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
@@ -975,8 +1002,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-      <label style={{ fontSize: 13, color: '#a3b8a3', minWidth: 260, flexShrink: 0 }}>{label}</label>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
+      <label style={{ fontSize: 13, color: '#a3b8a3', minWidth: 200, flexShrink: 0, paddingTop: 9 }}>{label}</label>
       <div style={{ flex: 1 }}>{children}</div>
     </div>
   )
