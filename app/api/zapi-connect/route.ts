@@ -73,7 +73,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Ação inválida' }, { status: 400 })
 
   } catch (err: any) {
-    const msg = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Erro desconhecido'
+    const zapiMsg = err?.response?.data?.message || err?.response?.data?.error || ''
+    let msg = zapiMsg || err.message || 'Erro desconhecido'
+
+    if (zapiMsg.toLowerCase().includes('client-token')) {
+      msg = 'Z-API exige Security Token nesta instância. Acesse: Z-API dashboard → sua instância → aba "Segurança" → gere o Security Token e cole no campo "Security Token (opcional)" acima.'
+    }
+
     return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
 }

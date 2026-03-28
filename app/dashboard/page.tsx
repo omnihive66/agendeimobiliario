@@ -851,7 +851,7 @@ export default function Dashboard() {
               <>
                 {/* ── Seção Z-API ─────────────────────── */}
                 <Section title="Z-API — WhatsApp">
-                  <FieldRow label="Client ID (Instance ID)">
+                  <FieldRow label="Instance ID (Client ID)">
                     <input
                       type="text"
                       value={cfgForm.zapi_instance_id}
@@ -860,26 +860,29 @@ export default function Dashboard() {
                       style={inputStyle}
                     />
                     {cfgSettings && <KeyStatus info={cfgSettings.zapi_instance_source} />}
+                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>Encontrado em: Z-API dashboard → sua instância → aba Início</div>
                   </FieldRow>
                   <FieldRow label="Token">
                     <input
                       type="password"
                       value={cfgForm.zapi_token}
                       onChange={e => setCfgForm(p => ({ ...p, zapi_token: e.target.value }))}
-                      placeholder={cfgSettings?.zapi_token_info.set ? '••••••••  (já configurado — cole para alterar)' : 'Informe o Token do Z-API'}
+                      placeholder={cfgSettings?.zapi_token_info.set ? '••••••••  (já configurado — cole para alterar)' : 'Token da instância Z-API'}
                       style={inputStyle}
                     />
                     {cfgSettings && <KeyStatus info={cfgSettings.zapi_token_info} />}
+                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>É o código depois de <code style={{color:'#6b7c6b'}}>/token/</code> na URL da instância</div>
                   </FieldRow>
-                  <FieldRow label="API Key">
+                  <FieldRow label="Security Token (opcional)">
                     <input
                       type="password"
                       value={cfgForm.zapi_client_token}
                       onChange={e => setCfgForm(p => ({ ...p, zapi_client_token: e.target.value }))}
-                      placeholder={cfgSettings?.zapi_client_token_info.set ? '••••••••  (já configurada — cole para alterar)' : 'Informe a API Key do Z-API'}
+                      placeholder={cfgSettings?.zapi_client_token_info.set ? '••••••••  (já configurado — cole para alterar)' : 'Deixe em branco se não usar'}
                       style={inputStyle}
                     />
                     {cfgSettings && <KeyStatus info={cfgSettings.zapi_client_token_info} />}
+                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>Z-API dashboard → sua instância → aba <strong style={{color:'#6b7c6b'}}>Segurança</strong> → Security Token. NÃO é a URL da API.</div>
                   </FieldRow>
 
                   {/* Botões Z-API */}
