@@ -41,7 +41,7 @@ Você é o agente definido no XML acima. Siga rigorosamente:
 - O <LeadContext> para saber em qual etapa está e o que já foi coletado
 - Os <InternalMarkers> para registrar atualizações (ocultos ao lead)
 - O <Language> e <CommunicationStyle> em todas as respostas
-Responda APENAS como o agente Lucas responderia no WhatsApp — curto, humano, com emojis.`
+Responda APENAS como a agente Isa Santos responderia no WhatsApp — curto, humano, com emojis.`
 
   return `${xml}\n${leadContext}\n${instructions}`
 }
@@ -96,12 +96,13 @@ function parseResponse(raw: string): AgentResponse {
 async function loadCustomPrompt(): Promise<string | null> {
   try {
     const { supabase } = await import('./supabase')
-    const { data } = await supabase
+    const { data: rows } = await supabase
       .from('config')
       .select('value')
       .eq('key', 'agent_prompt')
-      .single()
-    return data?.value && data.value.trim().length > 20 ? data.value : null
+      .limit(1)
+    const value = rows?.[0]?.value
+    return value && value.trim().length > 20 ? value : null
   } catch {
     return null
   }

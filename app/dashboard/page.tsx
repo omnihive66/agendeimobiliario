@@ -576,7 +576,7 @@ export default function Dashboard() {
               <>
                 {/* ── Seção Z-API ─────────────────────── */}
                 <Section title="Z-API — WhatsApp">
-                  <FieldRow label="Instance ID">
+                  <FieldRow label="Client ID (Instance ID)">
                     <input
                       type="text"
                       value={cfgForm.zapi_instance_id}
@@ -594,12 +594,12 @@ export default function Dashboard() {
                       style={inputStyle}
                     />
                   </FieldRow>
-                  <FieldRow label={`Client Token ${cfgSettings?.zapi_client_token_set ? '(salvo ✓)' : '(não configurado)'}`}>
+                  <FieldRow label={`API Key ${cfgSettings?.zapi_client_token_set ? '(salvo ✓)' : '(não configurada)'}`}>
                     <input
                       type="password"
                       value={cfgForm.zapi_client_token}
                       onChange={e => setCfgForm(p => ({ ...p, zapi_client_token: e.target.value }))}
-                      placeholder="Deixe em branco para manter o atual"
+                      placeholder="Deixe em branco para manter a atual"
                       style={inputStyle}
                     />
                   </FieldRow>
