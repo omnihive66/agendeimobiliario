@@ -125,3 +125,19 @@ export async function updateAgendamentoStatus(id: string, status: string) {
 export async function markCorretorNotified(id: string) {
   await supabase.from('agendamentos').update({ corretor_notif: true }).eq('id', id)
 }
+
+// ─── Config helper ─────────────────────────────────────────────────────────
+export async function getConfig(key: string): Promise<string | null> {
+  try {
+    const { data } = await supabase.from('config').select('value').eq('key', key).limit(1)
+    return data?.[0]?.value || null
+  } catch {
+    return null
+  }
+}
+
+export async function setConfig(key: string, value: string) {
+  await supabase
+    .from('config')
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+}

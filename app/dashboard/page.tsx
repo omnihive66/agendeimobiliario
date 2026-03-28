@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 
 type SpinStage = 'S' | 'P' | 'I' | 'N' | 'DONE'
-type TabKey = 'agendamentos' | 'leads' | 'prompt' | 'status'
+type TabKey = 'agendamentos' | 'leads' | 'prompt' | 'status' | 'config'
 
 interface Lead {
   id: string
@@ -39,6 +39,22 @@ interface WebhookStatus {
   last_message_phone: string | null
   timestamp: string
 }
+
+interface Settings {
+  zapi_instance_id: string
+  zapi_token_set: boolean
+  zapi_client_token_set: boolean
+  groq_api_key_set: boolean
+  openai_api_key_set: boolean
+  ai_model: string
+}
+
+const AI_MODELS = [
+  { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Groq — padrão)', provider: 'groq' },
+  { value: 'llama-3.1-8b-instant',    label: 'Llama 3.1 8B (Groq — rápido)',  provider: 'groq' },
+  { value: 'gpt-4o',                  label: 'GPT-4o (OpenAI)',                provider: 'openai' },
+  { value: 'gpt-4o-mini',             label: 'GPT-4o Mini (OpenAI — barato)',  provider: 'openai' },
+]
 
 const STAGE_LABELS: Record<SpinStage, string> = {
   S: 'Situação',
@@ -79,6 +95,25 @@ export default function Dashboard() {
   const [statusLoading, setStatusLoading] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  // ── Config tab state ────────────────────────────────────────
+  const [cfgSettings, setCfgSettings] = useState<Settings | null>(null)
+  const [cfgLoading, setCfgLoading] = useState(false)
+  const [cfgSaving, setCfgSaving] = useState(false)
+  const [cfgMsg, setCfgMsg] = useState('')
+  const [cfgForm, setCfgForm] = useState({
+    zapi_instance_id: '',
+    zapi_token: '',
+    zapi_client_token: '',
+    groq_api_key: '',
+    openai_api_key: '',
+    ai_model: 'llama-3.3-70b-versatile',
+  })
+  const [zapiTesting, setZapiTesting] = useState(false)
+  const [zapiTestResult, setZapiTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [zapiRegistering, setZapiRegistering] = useState(false)
+  const [zapiRegResult, setZapiRegResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  // ── Data loading ────────────────────────────────────────────
   async function load() {
     setLoading(true)
     setError(null)
@@ -89,7 +124,7 @@ export default function Dashboard() {
       ])
       setAgendamentos(Array.isArray(agResp) ? agResp : [])
       setLeads(Array.isArray(leResp) ? leResp : [])
-    } catch (e: any) {
+    } catch {
       setError('Erro ao carregar dados. Verifique a conexão com o Supabase.')
     } finally {
       setLoading(false)
@@ -150,6 +185,98 @@ export default function Dashboard() {
     }
   }
 
+  async function loadConfig() {
+    setCfgLoading(true)
+    try {
+      const r = await fetch('/api/settings')
+      const d: Settings = await r.json()
+      setCfgSettings(d)
+      setCfgForm(prev => ({ ...prev, ai_model: d.ai_model, zapi_instance_id: d.zapi_instance_id }))
+    } catch {
+      setCfgSettings(null)
+    } finally {
+      setCfgLoading(false)
+    }
+  }
+
+  async function saveConfig() {
+    setCfgSaving(true)
+    setCfgMsg('')
+    try {
+      const payload: Record<string, string> = { ai_model: cfgForm.ai_model }
+      if (cfgForm.zapi_instance_id) payload.zapi_instance_id = cfgForm.zapi_instance_id
+      if (cfgForm.zapi_token)       payload.zapi_token = cfgForm.zapi_token
+      if (cfgForm.zapi_client_token) payload.zapi_client_token = cfgForm.zapi_client_token
+      if (cfgForm.groq_api_key)     payload.groq_api_key = cfgForm.groq_api_key
+      if (cfgForm.openai_api_key)   payload.openai_api_key = cfgForm.openai_api_key
+
+      const r = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const d = await r.json()
+      if (r.ok) {
+        setCfgMsg('✅ Configurações salvas!')
+        // limpa campos sensíveis após salvar
+        setCfgForm(prev => ({ ...prev, zapi_token: '', zapi_client_token: '', groq_api_key: '', openai_api_key: '' }))
+        loadConfig()
+      } else {
+        setCfgMsg(`❌ ${d.error || 'Erro ao salvar.'}`)
+      }
+    } catch {
+      setCfgMsg('❌ Erro de conexão.')
+    } finally {
+      setCfgSaving(false)
+    }
+  }
+
+  async function testZapi() {
+    setZapiTesting(true)
+    setZapiTestResult(null)
+    try {
+      const r = await fetch('/api/zapi-connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'test' })
+      })
+      const d = await r.json()
+      if (d.ok && d.connected) {
+        setZapiTestResult({ ok: true, msg: `✅ Conectado! Número: ${d.phone || 'N/A'} (${d.status})` })
+      } else if (d.ok && !d.connected) {
+        setZapiTestResult({ ok: false, msg: `⚠️ Z-API respondeu mas WhatsApp não está conectado. Status: ${d.status}` })
+      } else {
+        setZapiTestResult({ ok: false, msg: `❌ ${d.error || 'Falha na conexão'}` })
+      }
+    } catch (e: any) {
+      setZapiTestResult({ ok: false, msg: `❌ ${e.message}` })
+    } finally {
+      setZapiTesting(false)
+    }
+  }
+
+  async function registerWebhook() {
+    setZapiRegistering(true)
+    setZapiRegResult(null)
+    try {
+      const r = await fetch('/api/zapi-connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'register-webhook' })
+      })
+      const d = await r.json()
+      if (d.ok) {
+        setZapiRegResult({ ok: true, msg: `✅ Webhook registrado: ${d.webhookUrl}` })
+      } else {
+        setZapiRegResult({ ok: false, msg: `❌ ${d.error}` })
+      }
+    } catch (e: any) {
+      setZapiRegResult({ ok: false, msg: `❌ ${e.message}` })
+    } finally {
+      setZapiRegistering(false)
+    }
+  }
+
   function copyUrl() {
     if (!webhookStatus?.webhook_url) return
     navigator.clipboard.writeText(webhookStatus.webhook_url)
@@ -162,6 +289,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (tab === 'prompt') loadPrompt()
     if (tab === 'status') loadStatus()
+    if (tab === 'config') loadConfig()
   }, [tab])
 
   async function updateStatus(id: string, status: string) {
@@ -182,7 +310,8 @@ export default function Dashboard() {
     agendamentos: `Agendamentos (${agendamentos.length})`,
     leads:        `Leads (${leads.length})`,
     prompt:       'Prompt do Agente',
-    status:       'Status do Webhook'
+    status:       'Status Z-API',
+    config:       'Configurações',
   }
 
   return (
@@ -225,7 +354,7 @@ export default function Dashboard() {
 
         {/* Tabs */}
         <div className="flex gap-2 mb-6" style={{ flexWrap: 'wrap' }}>
-          {(['agendamentos', 'leads', 'prompt', 'status'] as TabKey[]).map(t => (
+          {(['agendamentos', 'leads', 'prompt', 'status', 'config'] as TabKey[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -274,7 +403,6 @@ export default function Dashboard() {
                 alignItems: 'center',
                 gap: 20
               }}>
-                {/* Data */}
                 <div style={{ textAlign: 'center', minWidth: 64 }}>
                   <div style={{ fontSize: 26, fontWeight: 700, color: '#4ade80', fontFamily: 'var(--font-display)', lineHeight: 1 }}>
                     {ag.data_visita.split('-')[2]}
@@ -286,11 +414,7 @@ export default function Dashboard() {
                     {ag.hora_visita.slice(0, 5)}
                   </div>
                 </div>
-
-                {/* Divisor */}
                 <div style={{ width: 1, height: 60, background: '#1a3a1a' }} />
-
-                {/* Info */}
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 16, fontWeight: 600, color: '#e8f0e8' }}>
                     {ag.lead_name || 'Lead sem nome'}
@@ -304,20 +428,12 @@ export default function Dashboard() {
                     </div>
                   )}
                 </div>
-
-                {/* Status + ações */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
                   <span className={`spin-badge ${STATUS_COLORS[ag.status]}`} style={{ border: '1px solid', borderRadius: 999, padding: '2px 12px', fontSize: 11 }}>
                     {ag.status}
                   </span>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    {/* Botão WhatsApp */}
-                    <a
-                      href={`https://wa.me/${ag.lead_phone}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={btnStyle('#1a3a2a', '#4ade80')}
-                    >
+                    <a href={`https://wa.me/${ag.lead_phone}`} target="_blank" rel="noopener noreferrer" style={btnStyle('#1a3a2a', '#4ade80')}>
                       WhatsApp
                     </a>
                     {ag.status === 'pendente' && (
@@ -353,29 +469,17 @@ export default function Dashboard() {
                 gap: 16
               }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: '#e8f0e8' }}>
-                    {lead.name || 'Sem nome'}
-                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: '#e8f0e8' }}>{lead.name || 'Sem nome'}</div>
                   <div style={{ fontSize: 13, color: '#6b7c6b' }}>📱 {lead.phone}</div>
                   {lead.dor_principal && (
-                    <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
-                      Dor: {lead.dor_principal}
-                    </div>
+                    <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>Dor: {lead.dor_principal}</div>
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-                  <div className={`spin-badge badge-${lead.spin_stage}`}>
-                    {STAGE_LABELS[lead.spin_stage]}
-                  </div>
-                  <div style={{ fontSize: 11, color: '#4b5563' }}>
-                    {formatDateTime(lead.updated_at)}
-                  </div>
-                  <a
-                    href={`https://wa.me/${lead.phone}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ ...btnStyle('#1a3a2a', '#4ade80'), textDecoration: 'none', fontSize: 11 }}
-                  >
+                  <div className={`spin-badge badge-${lead.spin_stage}`}>{STAGE_LABELS[lead.spin_stage]}</div>
+                  <div style={{ fontSize: 11, color: '#4b5563' }}>{formatDateTime(lead.updated_at)}</div>
+                  <a href={`https://wa.me/${lead.phone}`} target="_blank" rel="noopener noreferrer"
+                    style={{ ...btnStyle('#1a3a2a', '#4ade80'), textDecoration: 'none', fontSize: 11 }}>
                     WhatsApp
                   </a>
                 </div>
@@ -399,107 +503,185 @@ export default function Dashboard() {
                   onChange={e => setPromptText(e.target.value)}
                   placeholder="Cole aqui o prompt personalizado, ou deixe em branco para usar o padrão..."
                   style={{
-                    width: '100%',
-                    minHeight: 360,
-                    background: '#111811',
-                    border: '1px solid #1a3a1a',
-                    borderRadius: 10,
-                    padding: 16,
-                    color: '#e8f0e8',
-                    fontSize: 13,
-                    fontFamily: 'monospace',
-                    resize: 'vertical',
-                    outline: 'none',
-                    lineHeight: 1.6
+                    width: '100%', minHeight: 360,
+                    background: '#111811', border: '1px solid #1a3a1a', borderRadius: 10,
+                    padding: 16, color: '#e8f0e8', fontSize: 13, fontFamily: 'monospace',
+                    resize: 'vertical', outline: 'none', lineHeight: 1.6
                   }}
                 />
                 <div style={{ fontSize: 12, color: '#4b5563', marginTop: 6, marginBottom: 16 }}>
                   {promptText.length.toLocaleString('pt-BR')} caracteres
                 </div>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <button
-                    onClick={savePrompt}
-                    disabled={promptSaving}
-                    style={{ ...btnStyle('#1a3a1a', '#4ade80'), padding: '8px 20px', fontSize: 14, opacity: promptSaving ? 0.6 : 1 }}
-                  >
+                  <button onClick={savePrompt} disabled={promptSaving}
+                    style={{ ...btnStyle('#1a3a1a', '#4ade80'), padding: '8px 20px', fontSize: 14, opacity: promptSaving ? 0.6 : 1 }}>
                     {promptSaving ? 'Salvando...' : 'Salvar Prompt'}
                   </button>
-                  <button
-                    onClick={resetPrompt}
-                    style={{ ...btnStyle('#3a1a1a', '#f87171'), padding: '8px 20px', fontSize: 14 }}
-                  >
+                  <button onClick={resetPrompt} style={{ ...btnStyle('#3a1a1a', '#f87171'), padding: '8px 20px', fontSize: 14 }}>
                     Restaurar Padrão
                   </button>
                   {promptMsg && (
-                    <span style={{ fontSize: 13, color: promptMsg.startsWith('✅') ? '#4ade80' : '#f87171' }}>
-                      {promptMsg}
-                    </span>
+                    <span style={{ fontSize: 13, color: promptMsg.startsWith('✅') ? '#4ade80' : '#f87171' }}>{promptMsg}</span>
                   )}
                 </div>
               </>
             )}
           </div>
 
-        ) : (
+        ) : tab === 'status' ? (
 
           /* ─── Status do Webhook ──────────────────────── */
           <div style={{ maxWidth: 700 }}>
-            {/* URL do webhook */}
             <div style={{ background: '#111811', border: '1px solid #1a3a1a', borderRadius: 10, padding: '16px 20px', marginBottom: 16 }}>
               <div style={{ fontSize: 12, color: '#6b7c6b', marginBottom: 6 }}>URL do Webhook (configure na Z-API)</div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <code style={{ flex: 1, color: '#4ade80', fontSize: 13, wordBreak: 'break-all' }}>
                   {webhookStatus?.webhook_url || 'Carregando...'}
                 </code>
-                <button
-                  onClick={copyUrl}
-                  style={{ ...btnStyle('#1a3a1a', '#4ade80'), whiteSpace: 'nowrap', padding: '6px 14px', fontSize: 12 }}
-                >
+                <button onClick={copyUrl}
+                  style={{ ...btnStyle('#1a3a1a', '#4ade80'), whiteSpace: 'nowrap', padding: '6px 14px', fontSize: 12 }}>
                   {copied ? '✅ Copiado' : 'Copiar URL'}
                 </button>
               </div>
             </div>
-
-            {/* Botão verificar */}
-            <button
-              onClick={loadStatus}
-              disabled={statusLoading}
-              style={{ ...btnStyle('#1a3a1a', '#4ade80'), padding: '8px 20px', fontSize: 14, marginBottom: 20, opacity: statusLoading ? 0.6 : 1 }}
-            >
+            <button onClick={loadStatus} disabled={statusLoading}
+              style={{ ...btnStyle('#1a3a1a', '#4ade80'), padding: '8px 20px', fontSize: 14, marginBottom: 20, opacity: statusLoading ? 0.6 : 1 }}>
               {statusLoading ? 'Verificando...' : '🔍 Verificar Conexão'}
             </button>
-
-            {/* Checklist de status */}
             {webhookStatus && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <StatusItem
-                  ok={webhookStatus.zapi_connected}
-                  label="Z-API conectada ao WhatsApp"
-                  detail={webhookStatus.zapi_phone ? `Número: ${webhookStatus.zapi_phone}` : webhookStatus.zapi_error || webhookStatus.zapi_status}
-                />
-                <StatusItem
-                  ok={!!webhookStatus.zapi_instance && webhookStatus.zapi_instance !== 'não configurado'}
-                  label="ZAPI_INSTANCE_ID configurado"
-                  detail={webhookStatus.zapi_instance}
-                />
-                <StatusItem
-                  ok={webhookStatus.messages_24h !== null}
-                  label="Supabase acessível"
-                  detail={webhookStatus.messages_24h !== null ? `${webhookStatus.messages_24h} mensagens nas últimas 24h` : 'Erro de conexão'}
-                />
-                <StatusItem
-                  ok={webhookStatus.leads_today !== null}
-                  label="Leads ativos hoje"
-                  detail={webhookStatus.leads_today !== null ? `${webhookStatus.leads_today} leads` : '—'}
-                />
+                <StatusItem ok={webhookStatus.zapi_connected} label="Z-API conectada ao WhatsApp"
+                  detail={webhookStatus.zapi_phone ? `Número: ${webhookStatus.zapi_phone}` : webhookStatus.zapi_error || webhookStatus.zapi_status} />
+                <StatusItem ok={!!webhookStatus.zapi_instance && webhookStatus.zapi_instance !== 'não configurado'}
+                  label="ZAPI_INSTANCE_ID configurado" detail={webhookStatus.zapi_instance} />
+                <StatusItem ok={webhookStatus.messages_24h !== null} label="Supabase acessível"
+                  detail={webhookStatus.messages_24h !== null ? `${webhookStatus.messages_24h} mensagens nas últimas 24h` : 'Erro de conexão'} />
+                <StatusItem ok={webhookStatus.leads_today !== null} label="Leads ativos hoje"
+                  detail={webhookStatus.leads_today !== null ? `${webhookStatus.leads_today} leads` : '—'} />
                 {webhookStatus.last_message && (
-                  <StatusItem
-                    ok={true}
-                    label="Última mensagem recebida"
-                    detail={`${formatDateTime(webhookStatus.last_message)} — ${webhookStatus.last_message_phone || ''}`}
-                  />
+                  <StatusItem ok={true} label="Última mensagem recebida"
+                    detail={`${formatDateTime(webhookStatus.last_message)} — ${webhookStatus.last_message_phone || ''}`} />
                 )}
               </div>
+            )}
+          </div>
+
+        ) : (
+
+          /* ─── Configurações ──────────────────────────── */
+          <div style={{ maxWidth: 700 }}>
+            {cfgLoading ? (
+              <div style={{ color: '#6b7c6b', padding: 20 }}>Carregando configurações...</div>
+            ) : (
+              <>
+                {/* ── Seção Z-API ─────────────────────── */}
+                <Section title="Z-API — WhatsApp">
+                  <FieldRow label="Instance ID">
+                    <input
+                      type="text"
+                      value={cfgForm.zapi_instance_id}
+                      onChange={e => setCfgForm(p => ({ ...p, zapi_instance_id: e.target.value }))}
+                      placeholder="Ex: 3F0C30F3B41441EDB3496EB5514D2922"
+                      style={inputStyle}
+                    />
+                  </FieldRow>
+                  <FieldRow label={`Token ${cfgSettings?.zapi_token_set ? '(salvo ✓)' : '(não configurado)'}`}>
+                    <input
+                      type="password"
+                      value={cfgForm.zapi_token}
+                      onChange={e => setCfgForm(p => ({ ...p, zapi_token: e.target.value }))}
+                      placeholder="Deixe em branco para manter o atual"
+                      style={inputStyle}
+                    />
+                  </FieldRow>
+                  <FieldRow label={`Client Token ${cfgSettings?.zapi_client_token_set ? '(salvo ✓)' : '(não configurado)'}`}>
+                    <input
+                      type="password"
+                      value={cfgForm.zapi_client_token}
+                      onChange={e => setCfgForm(p => ({ ...p, zapi_client_token: e.target.value }))}
+                      placeholder="Deixe em branco para manter o atual"
+                      style={inputStyle}
+                    />
+                  </FieldRow>
+
+                  {/* Botões Z-API */}
+                  <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button onClick={testZapi} disabled={zapiTesting}
+                      style={{ ...btnStyle('#1a2a3a', '#60a5fa'), padding: '8px 18px', fontSize: 13, opacity: zapiTesting ? 0.6 : 1 }}>
+                      {zapiTesting ? 'Testando...' : '🔌 Testar Conexão'}
+                    </button>
+                    <button onClick={registerWebhook} disabled={zapiRegistering}
+                      style={{ ...btnStyle('#1a3a2a', '#4ade80'), padding: '8px 18px', fontSize: 13, opacity: zapiRegistering ? 0.6 : 1 }}>
+                      {zapiRegistering ? 'Registrando...' : '📡 Registrar Webhook'}
+                    </button>
+                  </div>
+
+                  {zapiTestResult && (
+                    <div style={{ marginTop: 10, fontSize: 13, color: zapiTestResult.ok ? '#4ade80' : '#f87171', padding: '8px 12px', background: zapiTestResult.ok ? '#0f2a1a' : '#2a0f0f', borderRadius: 8 }}>
+                      {zapiTestResult.msg}
+                    </div>
+                  )}
+                  {zapiRegResult && (
+                    <div style={{ marginTop: 10, fontSize: 13, color: zapiRegResult.ok ? '#4ade80' : '#f87171', padding: '8px 12px', background: zapiRegResult.ok ? '#0f2a1a' : '#2a0f0f', borderRadius: 8 }}>
+                      {zapiRegResult.msg}
+                    </div>
+                  )}
+                </Section>
+
+                {/* ── Seção Modelo de IA ──────────────── */}
+                <Section title="Modelo de IA">
+                  <FieldRow label="Modelo ativo">
+                    <select
+                      value={cfgForm.ai_model}
+                      onChange={e => setCfgForm(p => ({ ...p, ai_model: e.target.value }))}
+                      style={{ ...inputStyle, cursor: 'pointer' }}
+                    >
+                      {AI_MODELS.map(m => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
+                  </FieldRow>
+                  <p style={{ fontSize: 12, color: '#4b5563', marginTop: 8 }}>
+                    Modelos Groq usam GROQ_API_KEY. Modelos GPT usam OPENAI_API_KEY.
+                  </p>
+                </Section>
+
+                {/* ── Seção Chaves de API ─────────────── */}
+                <Section title="Chaves de API">
+                  <FieldRow label={`GROQ API Key ${cfgSettings?.groq_api_key_set ? '(salva ✓)' : '(não configurada)'}`}>
+                    <input
+                      type="password"
+                      value={cfgForm.groq_api_key}
+                      onChange={e => setCfgForm(p => ({ ...p, groq_api_key: e.target.value }))}
+                      placeholder="Deixe em branco para manter a atual"
+                      style={inputStyle}
+                    />
+                  </FieldRow>
+                  <FieldRow label={`OpenAI API Key ${cfgSettings?.openai_api_key_set ? '(salva ✓)' : '(não configurada)'}`}>
+                    <input
+                      type="password"
+                      value={cfgForm.openai_api_key}
+                      onChange={e => setCfgForm(p => ({ ...p, openai_api_key: e.target.value }))}
+                      placeholder="Deixe em branco para manter a atual"
+                      style={inputStyle}
+                    />
+                  </FieldRow>
+                  <p style={{ fontSize: 12, color: '#4b5563', marginTop: 8 }}>
+                    As chaves aqui sobrescrevem as variáveis de ambiente do Vercel para este agente.
+                  </p>
+                </Section>
+
+                {/* ── Botão salvar ────────────────────── */}
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8 }}>
+                  <button onClick={saveConfig} disabled={cfgSaving}
+                    style={{ ...btnStyle('#1a3a1a', '#4ade80'), padding: '10px 28px', fontSize: 14, opacity: cfgSaving ? 0.6 : 1 }}>
+                    {cfgSaving ? 'Salvando...' : 'Salvar Configurações'}
+                  </button>
+                  {cfgMsg && (
+                    <span style={{ fontSize: 13, color: cfgMsg.startsWith('✅') ? '#4ade80' : '#f87171' }}>{cfgMsg}</span>
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}
@@ -508,16 +690,33 @@ export default function Dashboard() {
   )
 }
 
+// ─── Componentes auxiliares ───────────────────────────────────
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ background: '#111811', border: '1px solid #1a3a1a', borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#4ade80', marginBottom: 16, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+      <label style={{ fontSize: 13, color: '#a3b8a3', minWidth: 260, flexShrink: 0 }}>{label}</label>
+      <div style={{ flex: 1 }}>{children}</div>
+    </div>
+  )
+}
+
 function StatusItem({ ok, label, detail }: { ok: boolean; label: string; detail?: string | null }) {
   return (
     <div style={{
-      background: '#111811',
-      border: `1px solid ${ok ? '#1a3a1a' : '#3a1a1a'}`,
-      borderRadius: 10,
-      padding: '12px 16px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12
+      background: '#111811', border: `1px solid ${ok ? '#1a3a1a' : '#3a1a1a'}`, borderRadius: 10,
+      padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12
     }}>
       <span style={{ fontSize: 18 }}>{ok ? '✅' : '❌'}</span>
       <div>
@@ -540,4 +739,15 @@ function btnStyle(bg: string, color: string) {
     transition: 'opacity 0.2s',
     display: 'inline-block'
   } as React.CSSProperties
+}
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  background: '#0a0f0a',
+  border: '1px solid #1a3a1a',
+  borderRadius: 8,
+  padding: '8px 12px',
+  color: '#e8f0e8',
+  fontSize: 13,
+  outline: 'none',
 }

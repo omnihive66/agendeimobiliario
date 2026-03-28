@@ -127,12 +127,28 @@ export async function analyzeImage(imageUrl: string, prompt: string): Promise<st
   }
 }
 
+// ─── Modelo de IA dinâmico (config Supabase > padrão) ────────
+async function getAiModel(): Promise<string> {
+  try {
+    const { getConfig } = await import('./supabase')
+    const model = await getConfig('settings_ai_model')
+    return model || 'llama-3.3-70b-versatile'
+  } catch {
+    return 'llama-3.3-70b-versatile'
+  }
+}
+
+// Modelos que rodam via OpenAI (não Groq)
+const OPENAI_MODELS = new Set(['gpt-4o', 'gpt-4o-mini', 'o1-mini', 'o1'])
+
 // ─── Agente principal ─────────────────────────────────────────
 export async function runAgent(
   lead: Lead,
   history: Mensagem[],
   userMessage: string
 ): Promise<AgentResponse> {
+
+  const aiModel = await getAiModel()
 
   // Prompt customizado do painel tem prioridade, mas LeadContext é sempre injetado
   const customPrompt = await loadCustomPrompt()
@@ -163,39 +179,59 @@ export async function runAgent(
   messages.push({ role: 'user', content: userMessage })
 
   try {
-    // ── Groq llama-3.3-70b — modelo principal (testes) ───────
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 500,
-      temperature: 0.65,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...messages
-      ]
-    })
+    let raw: string
 
-    const raw = response.choices[0]?.message?.content || ''
-    return parseResponse(raw)
-
-  } catch (groqError) {
-    console.warn('[Agent] Groq indisponível, tentando GPT-4o...', groqError)
-
-    try {
-      // ── GPT-4o — fallback ─────────────────────────────────
+    if (OPENAI_MODELS.has(aiModel)) {
+      // ── Modelo OpenAI ─────────────────────────────────────
       const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: aiModel,
         max_tokens: 500,
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages
         ]
       })
+      raw = response.choices[0]?.message?.content || ''
+    } else {
+      // ── Modelo Groq (padrão) ──────────────────────────────
+      const response = await groq.chat.completions.create({
+        model: aiModel,
+        max_tokens: 500,
+        temperature: 0.65,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages
+        ]
+      })
+      raw = response.choices[0]?.message?.content || ''
+    }
+
+    return parseResponse(raw)
+
+  } catch (modelError) {
+    console.warn(`[Agent] Modelo ${aiModel} falhou, tentando fallback...`, modelError)
+
+    try {
+      // ── Fallback: tenta o oposto (Groq <-> OpenAI) ────────
+      const isFallbackOpenAI = !OPENAI_MODELS.has(aiModel)
+      const response = isFallbackOpenAI
+        ? await openai.chat.completions.create({
+            model: 'gpt-4o',
+            max_tokens: 500,
+            messages: [{ role: 'system', content: systemPrompt }, ...messages]
+          })
+        : await groq.chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            max_tokens: 500,
+            temperature: 0.65,
+            messages: [{ role: 'system', content: systemPrompt }, ...messages]
+          })
 
       const raw = response.choices[0]?.message?.content || ''
       return parseResponse(raw)
 
-    } catch (gptError) {
-      console.error('[Agent] Todos os modelos falharam:', gptError)
+    } catch (fallbackError) {
+      console.error('[Agent] Todos os modelos falharam:', fallbackError)
       return {
         text: 'Ei, tive um probleminha aqui 😅 Pode mandar sua mensagem de novo?',
         updates: {},
