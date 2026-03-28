@@ -1,95 +1,67 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from './database.types'
 
-// ─── Tipos das tabelas (para TypeScript inferir campos das queries) ────────────
+// ─── Tipos de aplicação ────────────────────────────────────────────────────
 export type SpinStage = 'S' | 'P' | 'I' | 'N' | 'DONE'
 
-export interface Lead {
+// Lead — derivado do tipo do banco (com campos obrigatórios para o agente)
+export type Lead = {
   id: string
   phone: string
-  name?: string
-  spin_stage: SpinStage
-  situacao?: string
-  dor_principal?: string
-  implicacao?: string
-  interesse?: string
-  lote_interesse?: string
-  created_at: string
-  updated_at: string
+  name?: string | null
+  spin_stage?: string | null
+  situacao?: string | null
+  dor_principal?: string | null
+  implicacao?: string | null
+  interesse?: string | null
+  lote_interesse?: string | null
+  client_profile?: string | null
+  followup_count?: number | null
+  last_objection?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
-export interface Mensagem {
+export type Mensagem = {
   id: string
   lead_phone: string
-  role: 'user' | 'assistant'
+  role: string
   content: string
-  media_type?: string
-  created_at: string
+  media_type?: string | null
+  created_at?: string | null
 }
 
-export interface Agendamento {
+export type Agendamento = {
   id: string
   lead_phone: string
-  lead_name?: string
-  dor_principal?: string
+  lead_name?: string | null
+  dor_principal?: string | null
   data_visita: string
   hora_visita: string
-  status: 'pendente' | 'confirmado' | 'cancelado' | 'realizado'
-  corretor_notif: boolean
-  created_at: string
-}
-
-interface ConfigRow {
-  key: string
-  value: string
-  updated_at: string
-}
-
-// ─── Database type — necessário para TypeScript inferir campos das queries ─────
-type Database = {
-  public: {
-    Tables: {
-      leads: {
-        Row: Lead
-        Insert: Omit<Lead, 'id' | 'created_at' | 'updated_at'> & { id?: string }
-        Update: Partial<Omit<Lead, 'id'>>
-      }
-      mensagens: {
-        Row: Mensagem
-        Insert: Omit<Mensagem, 'id' | 'created_at'> & { id?: string }
-        Update: Partial<Omit<Mensagem, 'id'>>
-      }
-      agendamentos: {
-        Row: Agendamento
-        Insert: Omit<Agendamento, 'id' | 'corretor_notif' | 'created_at'> & { id?: string; corretor_notif?: boolean }
-        Update: Partial<Omit<Agendamento, 'id'>>
-      }
-      config: {
-        Row: ConfigRow
-        Insert: ConfigRow
-        Update: Partial<ConfigRow>
-      }
-    }
-  }
+  status?: string | null
+  corretor_notif?: boolean | null
+  created_at?: string | null
 }
 
 // ─── Cliente Supabase ────────────────────────────────────────────────────────
-// Usa fallback vazio em build (Vercel não executa rotas na fase de análise);
-// em runtime as env vars reais estão sempre presentes.
-export const supabase = createClient<Database>(
+// Placeholder URL/key para o build do Vercel (rotas não são executadas na
+// fase de análise estática — apenas importadas). Em runtime as env vars reais
+// estão sempre presentes.
+export const supabase: SupabaseClient<Database> = createClient<Database>(
   process.env.NEXT_PUBLIC_SUPABASE_URL  || 'https://placeholder.supabase.co',
   process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-key',
   { auth: { persistSession: false } }
 )
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────
 
 export async function getLead(phone: string): Promise<Lead | null> {
   const { data } = await supabase
     .from('leads')
     .select('*')
     .eq('phone', phone)
-    .single()
-  return data
+    .maybeSingle()
+  return data as Lead | null
 }
 
 export async function upsertLead(phone: string, updates: Partial<Lead>): Promise<Lead> {
@@ -99,7 +71,7 @@ export async function upsertLead(phone: string, updates: Partial<Lead>): Promise
     .select()
     .single()
   if (error) throw error
-  return data
+  return data as Lead
 }
 
 export async function getHistory(phone: string, limit = 20): Promise<Mensagem[]> {
@@ -109,7 +81,7 @@ export async function getHistory(phone: string, limit = 20): Promise<Mensagem[]>
     .eq('lead_phone', phone)
     .order('created_at', { ascending: true })
     .limit(limit)
-  return data || []
+  return (data ?? []) as Mensagem[]
 }
 
 export async function saveMessage(
@@ -126,14 +98,16 @@ export async function saveMessage(
   })
 }
 
-export async function createAgendamento(data: Omit<Agendamento, 'id' | 'corretor_notif' | 'status' | 'created_at'>) {
-  const { data: agend, error } = await supabase
+export async function createAgendamento(
+  input: Pick<Agendamento, 'lead_phone' | 'lead_name' | 'dor_principal' | 'data_visita' | 'hora_visita'>
+): Promise<Agendamento> {
+  const { data, error } = await supabase
     .from('agendamentos')
-    .insert({ ...data, status: 'pendente' as const, corretor_notif: false })
+    .insert({ ...input, status: 'pendente', corretor_notif: false })
     .select()
     .single()
   if (error) throw error
-  return agend
+  return data as Agendamento
 }
 
 export async function getAgendamentos(): Promise<Agendamento[]> {
@@ -141,10 +115,10 @@ export async function getAgendamentos(): Promise<Agendamento[]> {
     .from('agendamentos')
     .select('*')
     .order('data_visita', { ascending: true })
-  return data || []
+  return (data ?? []) as Agendamento[]
 }
 
-export async function updateAgendamentoStatus(id: string, status: Agendamento['status']) {
+export async function updateAgendamentoStatus(id: string, status: string) {
   await supabase.from('agendamentos').update({ status }).eq('id', id)
 }
 
