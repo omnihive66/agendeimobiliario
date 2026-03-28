@@ -55,13 +55,13 @@ export async function GET() {
 
   // 4. Última mensagem recebida
   try {
-    // .limit(1) em vez de .single() para evitar inferência de 'never' no TS strict
+    // Cast explícito: supabase-js v2 infere 'never' em queries filtradas + strict TS
     const { data: rows } = await supabase
       .from('mensagens')
       .select('created_at, lead_phone')
       .eq('role', 'user')
       .order('created_at', { ascending: false })
-      .limit(1)
+      .limit(1) as unknown as { data: Array<{ created_at: string; lead_phone: string }> | null }
 
     const data = rows?.[0] ?? null
     result.last_message = data?.created_at || null

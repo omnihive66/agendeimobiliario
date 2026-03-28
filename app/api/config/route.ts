@@ -4,12 +4,13 @@ import { supabase } from '@/lib/supabase'
 // GET — busca prompt customizado salvo
 export async function GET() {
   try {
-    // .limit(1) em vez de .single() para evitar inferência de 'never' no TS strict
+    // Supabase v2 infere 'never' em queries com coluna específica + strict TS;
+    // cast explícito como workaround seguro (runtime sempre correto via Proxy)
     const { data: rows } = await supabase
       .from('config')
-      .select('value, updated_at')
+      .select('*')
       .eq('key', 'agent_prompt')
-      .limit(1)
+      .limit(1) as unknown as { data: Array<{ value: string; updated_at: string }> | null }
 
     const data = rows?.[0] ?? null
     return NextResponse.json({
