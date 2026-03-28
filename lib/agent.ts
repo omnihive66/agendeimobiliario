@@ -156,7 +156,7 @@ export async function runAgent(
   }
 
   const messages: AgentMessage[] = history.map(m => ({
-    role: m.role,
+    role: m.role as 'user' | 'assistant',
     content: m.content
   }))
   messages.push({ role: 'user', content: userMessage })
