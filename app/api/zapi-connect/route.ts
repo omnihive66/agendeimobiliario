@@ -58,8 +58,12 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Z-API aceita PUT /webhook com o campo webhookReceive
-      await axios.put(`${base}/webhook`, { webhookReceive: webhookUrl }, { headers, timeout: 8000 })
+      // Endpoint correto conforme documentação Z-API
+      await axios.put(
+        `${base}/update-webhook-received`,
+        { value: webhookUrl },
+        { headers, timeout: 8000 }
+      )
 
       return NextResponse.json({ ok: true, webhookUrl })
     }
