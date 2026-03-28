@@ -36,13 +36,15 @@ export async function POST(req: NextRequest) {
 
     // ── Testar conexão ────────────────────────────────────────
     if (action === 'test') {
-      const { data } = await axios.get(`${base}/status`, { headers, timeout: 8000 })
+      const url = `${base}/status`
+      const { data } = await axios.get(url, { headers, timeout: 8000 })
       const connected = data?.connected === true || data?.status === 'CONNECTED'
       return NextResponse.json({
         ok: true,
         connected,
         phone: data?.phone || data?.connectedPhone || null,
         status: data?.status || 'desconhecido',
+        _debug: { instanceId: instanceId.slice(0, 8) + '...', hasToken: !!token, hasClientToken: !!clientToken },
       })
     }
 
@@ -77,13 +79,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Ação inválida' }, { status: 400 })
 
   } catch (err: any) {
-    const zapiMsg = err?.response?.data?.message || err?.response?.data?.error || ''
+    const zapiData = err?.response?.data
+    const zapiMsg = zapiData?.message || zapiData?.error || ''
     let msg = zapiMsg || err.message || 'Erro desconhecido'
 
     if (zapiMsg.toLowerCase().includes('client-token')) {
       msg = 'Z-API exige Security Token nesta instância. Acesse: Z-API dashboard → sua instância → aba "Segurança" → gere o Security Token e cole no campo "Security Token (opcional)" acima.'
     }
 
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
+    return NextResponse.json({
+      ok: false,
+      error: msg,
+      _debug: { status: err?.response?.status, body: zapiData }
+    }, { status: 500 })
   }
 }
