@@ -55,14 +55,15 @@ export async function GET() {
 
   // 4. Última mensagem recebida
   try {
-    const { data } = await supabase
+    // .limit(1) em vez de .single() para evitar inferência de 'never' no TS strict
+    const { data: rows } = await supabase
       .from('mensagens')
       .select('created_at, lead_phone')
       .eq('role', 'user')
       .order('created_at', { ascending: false })
       .limit(1)
-      .single()
 
+    const data = rows?.[0] ?? null
     result.last_message = data?.created_at || null
     result.last_message_phone = data?.lead_phone || null
   } catch {

@@ -4,12 +4,14 @@ import { supabase } from '@/lib/supabase'
 // GET — busca prompt customizado salvo
 export async function GET() {
   try {
-    const { data } = await supabase
+    // .limit(1) em vez de .single() para evitar inferência de 'never' no TS strict
+    const { data: rows } = await supabase
       .from('config')
-      .select('*')
+      .select('value, updated_at')
       .eq('key', 'agent_prompt')
-      .single()
+      .limit(1)
 
+    const data = rows?.[0] ?? null
     return NextResponse.json({
       prompt: data?.value || '',
       updated_at: data?.updated_at || null
