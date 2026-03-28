@@ -4,8 +4,9 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { Lead, Mensagem } from './supabase'
 
-const groq   = new Groq({ apiKey: process.env.GROQ_API_KEY! })
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+// Placeholder keys para o build do Vercel; em runtime as env vars reais estão presentes
+const groq   = new Groq({ apiKey: process.env.GROQ_API_KEY   || 'placeholder-key' })
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'placeholder-key' })
 
 // ─── Carrega o XML do prompt ──────────────────────────────────
 function loadPromptXML(): string {

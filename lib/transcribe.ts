@@ -1,7 +1,8 @@
 import Groq from 'groq-sdk'
 import axios from 'axios'
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
+// Placeholder key para o build do Vercel; em runtime a env var real está presente
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || 'placeholder-key' })
 
 export async function transcribeAudioFromUrl(audioUrl: string): Promise<string> {
   try {
