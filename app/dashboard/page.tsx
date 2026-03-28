@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 
 type SpinStage = 'S' | 'P' | 'I' | 'N' | 'DONE'
-type TabKey = 'agendamentos' | 'leads' | 'prompt' | 'status' | 'config'
+type TabKey = 'conversas' | 'agendamentos' | 'leads' | 'prompt' | 'status' | 'config'
+type Temperature = 'quente' | 'morno' | 'frio'
 
 interface Lead {
   id: string
@@ -40,6 +41,29 @@ interface WebhookStatus {
   timestamp: string
 }
 
+interface ConvLead {
+  id: string
+  phone: string
+  name?: string | null
+  spin_stage?: string | null
+  dor_principal?: string | null
+  updated_at?: string | null
+  temperature: Temperature
+  last_message?: string | null
+  last_message_role?: string | null
+  last_message_at?: string | null
+  last_media_type?: string | null
+}
+
+interface Mensagem {
+  id: string
+  lead_phone: string
+  role: string
+  content: string
+  media_type?: string | null
+  created_at?: string | null
+}
+
 interface Settings {
   zapi_instance_id: string
   zapi_token_set: boolean
@@ -47,6 +71,12 @@ interface Settings {
   groq_api_key_set: boolean
   openai_api_key_set: boolean
   ai_model: string
+}
+
+const TEMP_CONFIG: Record<Temperature, { emoji: string; label: string; color: string; bg: string; border: string }> = {
+  quente: { emoji: '🔥', label: 'Quente', color: '#f97316', bg: '#2a1500', border: '#7c2d12' },
+  morno:  { emoji: '🌡️', label: 'Morno',  color: '#facc15', bg: '#1f1a00', border: '#713f12' },
+  frio:   { emoji: '❄️', label: 'Frio',   color: '#60a5fa', bg: '#0a1628', border: '#1e3a5f' },
 }
 
 const AI_MODELS = [
@@ -78,11 +108,20 @@ function formatDateTime(iso: string) {
 }
 
 export default function Dashboard() {
-  const [tab, setTab] = useState<TabKey>('agendamentos')
+  const [tab, setTab] = useState<TabKey>('conversas')
   const [agendamentos, setAgendamentos] = useState<Agendamento[]>([])
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // ── Conversas tab state ─────────────────────────────────────
+  const [convLeads, setConvLeads] = useState<ConvLead[]>([])
+  const [convLoading, setConvLoading] = useState(false)
+  const [selectedPhone, setSelectedPhone] = useState<string | null>(null)
+  const [messages, setMessages] = useState<Mensagem[]>([])
+  const [msgLoading, setMsgLoading] = useState(false)
+  const [convSearch, setConvSearch] = useState('')
+  const [tempFilter, setTempFilter] = useState<Temperature | 'todos'>('todos')
 
   // ── Prompt tab state ────────────────────────────────────────
   const [promptText, setPromptText] = useState('')
@@ -112,6 +151,39 @@ export default function Dashboard() {
   const [zapiTestResult, setZapiTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [zapiRegistering, setZapiRegistering] = useState(false)
   const [zapiRegResult, setZapiRegResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  // ── Conversas ───────────────────────────────────────────────
+  async function loadConversations() {
+    setConvLoading(true)
+    try {
+      const r = await fetch('/api/conversations')
+      const d = await r.json()
+      setConvLeads(Array.isArray(d) ? d : [])
+    } catch {
+      setConvLeads([])
+    } finally {
+      setConvLoading(false)
+    }
+  }
+
+  async function loadMessages(phone: string) {
+    setMsgLoading(true)
+    setMessages([])
+    try {
+      const r = await fetch(`/api/conversations/${encodeURIComponent(phone)}`)
+      const d = await r.json()
+      setMessages(Array.isArray(d) ? d : [])
+    } catch {
+      setMessages([])
+    } finally {
+      setMsgLoading(false)
+    }
+  }
+
+  function selectLead(phone: string) {
+    setSelectedPhone(phone)
+    loadMessages(phone)
+  }
 
   // ── Data loading ────────────────────────────────────────────
   async function load() {
@@ -292,6 +364,7 @@ export default function Dashboard() {
   useEffect(() => { load() }, [])
 
   useEffect(() => {
+    if (tab === 'conversas') loadConversations()
     if (tab === 'prompt') loadPrompt()
     if (tab === 'status') loadStatus()
     if (tab === 'config') loadConfig()
@@ -311,7 +384,10 @@ export default function Dashboard() {
     return acc
   }, {} as Record<string, number>)
 
+  const tempCounts = convLeads.reduce((acc, l) => { acc[l.temperature] = (acc[l.temperature] || 0) + 1; return acc }, {} as Record<string, number>)
+
   const TAB_LABELS: Record<TabKey, string> = {
+    conversas:    `💬 Conversas (${convLeads.length})`,
     agendamentos: `Agendamentos (${agendamentos.length})`,
     leads:        `Leads (${leads.length})`,
     prompt:       'Prompt do Agente',
@@ -359,7 +435,7 @@ export default function Dashboard() {
 
         {/* Tabs */}
         <div className="flex gap-2 mb-6" style={{ flexWrap: 'wrap' }}>
-          {(['agendamentos', 'leads', 'prompt', 'status', 'config'] as TabKey[]).map(t => (
+          {(['conversas', 'agendamentos', 'leads', 'prompt', 'status', 'config'] as TabKey[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -389,6 +465,189 @@ export default function Dashboard() {
         {/* ─── Conteúdo por tab ────────────────────────── */}
         {loading && (tab === 'agendamentos' || tab === 'leads') ? (
           <div style={{ color: '#6b7c6b', textAlign: 'center', padding: 60 }}>Carregando...</div>
+        ) : tab === 'conversas' ? (
+
+          /* ─── Conversas (Chatwoot-style) ───────────── */
+          <div style={{ display: 'flex', gap: 0, height: 'calc(100vh - 280px)', minHeight: 500, border: '1px solid #1a3a1a', borderRadius: 12, overflow: 'hidden' }}>
+
+            {/* ── Lista de leads ──────────────────────── */}
+            <div style={{ width: 320, flexShrink: 0, borderRight: '1px solid #1a3a1a', display: 'flex', flexDirection: 'column', background: '#0d150d' }}>
+
+              {/* Cabeçalho + filtros */}
+              <div style={{ padding: '14px 16px', borderBottom: '1px solid #1a3a1a' }}>
+                <input
+                  type="text"
+                  placeholder="Buscar lead..."
+                  value={convSearch}
+                  onChange={e => setConvSearch(e.target.value)}
+                  style={{ ...inputStyle, marginBottom: 10, fontSize: 12 }}
+                />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {(['todos', 'quente', 'morno', 'frio'] as const).map(f => (
+                    <button key={f} onClick={() => setTempFilter(f)} style={{
+                      flex: 1, padding: '4px 0', borderRadius: 6, fontSize: 11, cursor: 'pointer',
+                      border: tempFilter === f ? '1px solid #166534' : '1px solid #1a3a1a',
+                      background: tempFilter === f ? '#1a3a1a' : 'transparent',
+                      color: f === 'todos' ? '#6b7c6b' : TEMP_CONFIG[f as Temperature]?.color || '#6b7c6b',
+                    }}>
+                      {f === 'todos' ? `Todos (${convLeads.length})` : `${TEMP_CONFIG[f as Temperature].emoji} ${tempCounts[f] || 0}`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Lista */}
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {convLoading ? (
+                  <div style={{ color: '#6b7c6b', textAlign: 'center', padding: 40, fontSize: 13 }}>Carregando...</div>
+                ) : convLeads
+                    .filter(l => tempFilter === 'todos' || l.temperature === tempFilter)
+                    .filter(l => !convSearch || (l.name || l.phone).toLowerCase().includes(convSearch.toLowerCase()))
+                    .map(lead => {
+                      const tc = TEMP_CONFIG[lead.temperature]
+                      const isSelected = selectedPhone === lead.phone
+                      const preview = lead.last_media_type && lead.last_media_type !== 'text'
+                        ? `[${lead.last_media_type}]`
+                        : (lead.last_message || 'Sem mensagens').slice(0, 55)
+                      return (
+                        <div key={lead.phone} onClick={() => selectLead(lead.phone)}
+                          style={{
+                            padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #111',
+                            background: isSelected ? '#1a3a1a' : 'transparent',
+                            transition: 'background 0.15s',
+                          }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              {/* Avatar */}
+                              <div style={{
+                                width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                                background: '#1a3a1a', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 14, color: '#4ade80', fontWeight: 700, border: `2px solid ${tc.border}`
+                              }}>
+                                {(lead.name || lead.phone).charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: isSelected ? '#4ade80' : '#e8f0e8' }}>
+                                  {lead.name || lead.phone}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#4b5563' }}>{lead.phone}</div>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                              <span style={{
+                                fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 999,
+                                color: tc.color, background: tc.bg, border: `1px solid ${tc.border}`
+                              }}>
+                                {tc.emoji} {tc.label}
+                              </span>
+                              {lead.last_message_at && (
+                                <span style={{ fontSize: 10, color: '#4b5563' }}>
+                                  {new Date(lead.last_message_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{
+                            fontSize: 12, color: lead.last_message_role === 'user' ? '#a3b8a3' : '#6b7c6b',
+                            marginLeft: 44, marginTop: 2,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                          }}>
+                            {lead.last_message_role === 'assistant' ? '🤖 ' : ''}{preview}
+                          </div>
+                        </div>
+                      )
+                    })
+                }
+              </div>
+
+              {/* Botão atualizar */}
+              <div style={{ padding: '10px 16px', borderTop: '1px solid #1a3a1a' }}>
+                <button onClick={loadConversations} disabled={convLoading}
+                  style={{ ...btnStyle('#1a3a1a', '#4ade80'), width: '100%', padding: '7px 0', fontSize: 12, textAlign: 'center' }}>
+                  {convLoading ? 'Atualizando...' : '↻ Atualizar conversas'}
+                </button>
+              </div>
+            </div>
+
+            {/* ── Painel da conversa ──────────────────── */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#0a0f0a' }}>
+              {!selectedPhone ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563', fontSize: 14 }}>
+                  ← Selecione uma conversa para visualizar
+                </div>
+              ) : (() => {
+                const lead = convLeads.find(l => l.phone === selectedPhone)
+                const tc = lead ? TEMP_CONFIG[lead.temperature] : null
+                return (
+                  <>
+                    {/* Header do lead */}
+                    <div style={{ padding: '14px 20px', borderBottom: '1px solid #1a3a1a', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ fontSize: 16, fontWeight: 700, color: '#e8f0e8' }}>{lead?.name || selectedPhone}</span>
+                          {tc && (
+                            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, color: tc.color, background: tc.bg, border: `1px solid ${tc.border}` }}>
+                              {tc.emoji} {tc.label}
+                            </span>
+                          )}
+                          {lead?.spin_stage && (
+                            <span className={`spin-badge badge-${lead.spin_stage}`} style={{ fontSize: 11 }}>
+                              {lead.spin_stage}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#6b7c6b', marginTop: 2 }}>
+                          📱 {selectedPhone}
+                          {lead?.dor_principal && <span style={{ marginLeft: 12, color: '#fbbf24' }}>💬 {lead.dor_principal}</span>}
+                        </div>
+                      </div>
+                      <a href={`https://wa.me/${selectedPhone}`} target="_blank" rel="noopener noreferrer"
+                        style={{ ...btnStyle('#1a3a2a', '#4ade80'), padding: '6px 14px', fontSize: 12, textDecoration: 'none' }}>
+                        Abrir WhatsApp
+                      </a>
+                    </div>
+
+                    {/* Mensagens */}
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {msgLoading ? (
+                        <div style={{ textAlign: 'center', color: '#6b7c6b', paddingTop: 40 }}>Carregando mensagens...</div>
+                      ) : messages.length === 0 ? (
+                        <div style={{ textAlign: 'center', color: '#6b7c6b', paddingTop: 40 }}>Nenhuma mensagem registrada.</div>
+                      ) : (
+                        messages.map(msg => {
+                          const isUser = msg.role === 'user'
+                          const isAudio = msg.media_type === 'audio'
+                          const isImage = msg.media_type === 'image'
+                          return (
+                            <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-start' : 'flex-end' }}>
+                              <div style={{
+                                maxWidth: '70%',
+                                padding: '10px 14px',
+                                borderRadius: isUser ? '4px 14px 14px 14px' : '14px 4px 14px 14px',
+                                background: isUser ? '#1a2a1a' : '#0f2a1f',
+                                border: `1px solid ${isUser ? '#1a3a1a' : '#166534'}`,
+                                fontSize: 13,
+                                color: '#e8f0e8',
+                                lineHeight: 1.5,
+                              }}>
+                                {isAudio && <div style={{ fontSize: 11, color: '#6b7c6b', marginBottom: 4 }}>🎵 Áudio transcrito</div>}
+                                {isImage && <div style={{ fontSize: 11, color: '#6b7c6b', marginBottom: 4 }}>🖼️ Imagem</div>}
+                                <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</div>
+                                <div style={{ fontSize: 10, color: '#4b5563', marginTop: 6, textAlign: 'right' }}>
+                                  {isUser ? '👤 Lead' : '🤖 Isa'} · {msg.created_at ? new Date(msg.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })
+                      )}
+                    </div>
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+
         ) : tab === 'agendamentos' ? (
 
           /* ─── Agendamentos ─────────────────────────── */
