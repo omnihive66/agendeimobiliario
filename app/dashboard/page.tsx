@@ -153,9 +153,14 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: promptText })
       })
-      setPromptMsg(r.ok ? '✅ Prompt salvo com sucesso!' : '❌ Erro ao salvar.')
-    } catch {
-      setPromptMsg('❌ Erro de conexão.')
+      const d = await r.json()
+      if (r.ok) {
+        setPromptMsg('✅ Prompt salvo com sucesso!')
+      } else {
+        setPromptMsg(`❌ Erro: ${d.error || r.status}`)
+      }
+    } catch (e: any) {
+      setPromptMsg(`❌ Erro de conexão: ${e.message}`)
     } finally {
       setPromptSaving(false)
     }
@@ -491,8 +496,14 @@ export default function Dashboard() {
 
           /* ─── Prompt do Agente ───────────────────────── */
           <div style={{ maxWidth: 800 }}>
+            <div style={{ background: '#1a2e1a', border: '1px solid #166534', borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: '#4ade80', fontWeight: 600, marginBottom: 4 }}>✅ Prompt padrão já está ativo (prompt.xml)</div>
+              <div style={{ fontSize: 12, color: '#6b7c6b' }}>
+                O arquivo <code style={{ color: '#86efac' }}>prompt.xml</code> já contém toda a técnica SPIN, perfis de cliente, produto Residencial Nova Luziânia e objeções. A agente <strong style={{ color: '#a3b8a3' }}>Isa Santos</strong> já está configurada e funcionando. Use este campo apenas se quiser <strong style={{ color: '#a3b8a3' }}>substituir completamente</strong> o comportamento padrão.
+              </div>
+            </div>
             <p style={{ color: '#6b7c6b', fontSize: 13, marginBottom: 16 }}>
-              Personalize o comportamento do agente Lucas. Deixe em branco para usar o prompt padrão do arquivo <code style={{ color: '#4ade80' }}>prompt.xml</code>.
+              Prompt customizado (deixe em branco para usar o padrão <code style={{ color: '#4ade80' }}>prompt.xml</code>):
             </p>
             {promptLoading ? (
               <div style={{ color: '#6b7c6b', padding: 20 }}>Carregando prompt...</div>
