@@ -72,27 +72,14 @@ type Database = {
   }
 }
 
-// ─── Lazy singleton ─────────────────────────────────────────────────────────
-// Não inicializa na importação do módulo para não quebrar o build do Next.js
-// quando as env vars não estão presentes (fase de análise estática).
-let _client: SupabaseClient<Database> | null = null
-
-function getClient(): SupabaseClient<Database> {
-  if (!_client) {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!url || !key) throw new Error('NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios')
-    _client = createClient<Database>(url, key, { auth: { persistSession: false } })
-  }
-  return _client
-}
-
-// Proxy mantém a mesma API sem inicializar na importação
-export const supabase = new Proxy({} as SupabaseClient<Database>, {
-  get(_target, prop) {
-    return (getClient() as any)[prop]
-  }
-})
+// ─── Cliente Supabase ────────────────────────────────────────────────────────
+// Usa fallback vazio em build (Vercel não executa rotas na fase de análise);
+// em runtime as env vars reais estão sempre presentes.
+export const supabase = createClient<Database>(
+  process.env.NEXT_PUBLIC_SUPABASE_URL  || 'https://placeholder.supabase.co',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-key',
+  { auth: { persistSession: false } }
+)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

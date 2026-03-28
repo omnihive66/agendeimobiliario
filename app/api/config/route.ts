@@ -4,13 +4,11 @@ import { supabase } from '@/lib/supabase'
 // GET — busca prompt customizado salvo
 export async function GET() {
   try {
-    // Supabase v2 infere 'never' em queries com coluna específica + strict TS;
-    // cast explícito como workaround seguro (runtime sempre correto via Proxy)
     const { data: rows } = await supabase
       .from('config')
       .select('*')
       .eq('key', 'agent_prompt')
-      .limit(1) as unknown as { data: Array<{ value: string; updated_at: string }> | null }
+      .limit(1)
 
     const data = rows?.[0] ?? null
     return NextResponse.json({
