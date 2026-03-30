@@ -29,11 +29,12 @@ interface Agendamento {
 
 interface WebhookStatus {
   webhook_url: string
-  zapi_instance: string
-  zapi_connected: boolean
-  zapi_phone: string | null
-  zapi_status: string
-  zapi_error?: string
+  meta_phone_number_id: string
+  meta_connected: boolean
+  meta_phone: string | null
+  meta_name: string | null
+  meta_quality: string | null
+  meta_error?: string
   messages_24h: number | null
   leads_today: number | null
   last_message: string | null
@@ -67,10 +68,11 @@ interface Mensagem {
 interface FieldInfo { set: boolean; source: 'env' | 'config' | null }
 interface Settings {
   supabase_ready: boolean
-  zapi_instance_id: string
-  zapi_instance_source: FieldInfo
-  zapi_token_info: FieldInfo
-  zapi_client_token_info: FieldInfo
+  meta_phone_number_id: string
+  meta_phone_number_id_info: FieldInfo
+  meta_access_token_info: FieldInfo
+  meta_verify_token: string
+  meta_verify_token_info: FieldInfo
   groq_api_key_info: FieldInfo
   openai_api_key_info: FieldInfo
   ai_model: string
@@ -143,17 +145,16 @@ export default function Dashboard() {
   const [cfgSaving, setCfgSaving] = useState(false)
   const [cfgMsg, setCfgMsg] = useState('')
   const [cfgForm, setCfgForm] = useState({
-    zapi_instance_id: '',
-    zapi_token: '',
-    zapi_client_token: '',
+    meta_phone_number_id: '',
+    meta_access_token: '',
+    meta_verify_token: '',
     groq_api_key: '',
     openai_api_key: '',
     ai_model: 'llama-3.3-70b-versatile',
   })
-  const [zapiTesting, setZapiTesting] = useState(false)
-  const [zapiTestResult, setZapiTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
-  const [zapiRegistering, setZapiRegistering] = useState(false)
-  const [zapiRegResult, setZapiRegResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [metaTesting, setMetaTesting] = useState(false)
+  const [metaTestResult, setMetaTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [webhookInfoResult, setWebhookInfoResult] = useState<{ ok: boolean; msg: string; details?: string[] } | null>(null)
 
   // ── Conversas ───────────────────────────────────────────────
   async function loadConversations() {
@@ -272,7 +273,12 @@ export default function Dashboard() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const d: Settings = await r.json()
       setCfgSettings(d)
-      setCfgForm(prev => ({ ...prev, ai_model: d.ai_model, zapi_instance_id: d.zapi_instance_id || prev.zapi_instance_id }))
+      setCfgForm(prev => ({
+        ...prev,
+        ai_model: d.ai_model,
+        meta_phone_number_id: d.meta_phone_number_id || prev.meta_phone_number_id,
+        meta_verify_token: d.meta_verify_token || prev.meta_verify_token,
+      }))
     } catch (e: any) {
       setCfgMsg(`❌ Erro ao carregar: ${e.message}`)
       setCfgSettings(null)
@@ -286,11 +292,11 @@ export default function Dashboard() {
     setCfgMsg('')
     try {
       const payload: Record<string, string> = { ai_model: cfgForm.ai_model }
-      if (cfgForm.zapi_instance_id) payload.zapi_instance_id = cfgForm.zapi_instance_id
-      if (cfgForm.zapi_token)       payload.zapi_token = cfgForm.zapi_token
-      if (cfgForm.zapi_client_token) payload.zapi_client_token = cfgForm.zapi_client_token
-      if (cfgForm.groq_api_key)     payload.groq_api_key = cfgForm.groq_api_key
-      if (cfgForm.openai_api_key)   payload.openai_api_key = cfgForm.openai_api_key
+      if (cfgForm.meta_phone_number_id) payload.meta_phone_number_id = cfgForm.meta_phone_number_id
+      if (cfgForm.meta_access_token)    payload.meta_access_token    = cfgForm.meta_access_token
+      if (cfgForm.meta_verify_token)    payload.meta_verify_token    = cfgForm.meta_verify_token
+      if (cfgForm.groq_api_key)         payload.groq_api_key         = cfgForm.groq_api_key
+      if (cfgForm.openai_api_key)       payload.openai_api_key       = cfgForm.openai_api_key
 
       const r = await fetch('/api/settings', {
         method: 'POST',
@@ -301,7 +307,7 @@ export default function Dashboard() {
       if (r.ok) {
         setCfgMsg('✅ Configurações salvas!')
         // limpa campos sensíveis após salvar
-        setCfgForm(prev => ({ ...prev, zapi_token: '', zapi_client_token: '', groq_api_key: '', openai_api_key: '' }))
+        setCfgForm(prev => ({ ...prev, meta_access_token: '', groq_api_key: '', openai_api_key: '' }))
         loadConfig()
       } else {
         setCfgMsg(`❌ ${d.error || 'Erro ao salvar.'}`)
@@ -313,49 +319,44 @@ export default function Dashboard() {
     }
   }
 
-  async function testZapi() {
-    setZapiTesting(true)
-    setZapiTestResult(null)
+  async function testMeta() {
+    setMetaTesting(true)
+    setMetaTestResult(null)
     try {
-      const r = await fetch('/api/zapi-connect', {
+      const r = await fetch('/api/meta-connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'test' })
       })
       const d = await r.json()
-      if (d.ok && d.connected) {
-        setZapiTestResult({ ok: true, msg: `✅ Conectado! Número: ${d.phone || 'N/A'} (${d.status})` })
-      } else if (d.ok && !d.connected) {
-        setZapiTestResult({ ok: false, msg: `⚠️ Z-API respondeu mas WhatsApp não está conectado. Status: ${d.status}` })
+      if (d.ok) {
+        setMetaTestResult({ ok: true, msg: `✅ Conectado! Número: ${d.phone || 'N/A'} — ${d.name || ''}` })
       } else {
-        setZapiTestResult({ ok: false, msg: `❌ ${d.error || 'Falha na conexão'}` })
+        setMetaTestResult({ ok: false, msg: `❌ ${d.error || 'Falha na conexão'}` })
       }
     } catch (e: any) {
-      setZapiTestResult({ ok: false, msg: `❌ ${e.message}` })
+      setMetaTestResult({ ok: false, msg: `❌ ${e.message}` })
     } finally {
-      setZapiTesting(false)
+      setMetaTesting(false)
     }
   }
 
-  async function registerWebhook() {
-    setZapiRegistering(true)
-    setZapiRegResult(null)
+  async function getWebhookInfo() {
+    setWebhookInfoResult(null)
     try {
-      const r = await fetch('/api/zapi-connect', {
+      const r = await fetch('/api/meta-connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'register-webhook' })
+        body: JSON.stringify({ action: 'webhook-info' })
       })
       const d = await r.json()
       if (d.ok) {
-        setZapiRegResult({ ok: true, msg: `✅ Webhook registrado: ${d.webhookUrl}` })
+        setWebhookInfoResult({ ok: true, msg: `URL: ${d.webhookUrl}  |  Verify Token: ${d.verifyToken}`, details: d.instructions })
       } else {
-        setZapiRegResult({ ok: false, msg: `❌ ${d.error}` })
+        setWebhookInfoResult({ ok: false, msg: `❌ ${d.error}` })
       }
     } catch (e: any) {
-      setZapiRegResult({ ok: false, msg: `❌ ${e.message}` })
-    } finally {
-      setZapiRegistering(false)
+      setWebhookInfoResult({ ok: false, msg: `❌ ${e.message}` })
     }
   }
 
@@ -808,7 +809,7 @@ export default function Dashboard() {
           /* ─── Status do Webhook ──────────────────────── */
           <div style={{ maxWidth: 700 }}>
             <div style={{ background: '#111811', border: '1px solid #1a3a1a', borderRadius: 10, padding: '16px 20px', marginBottom: 16 }}>
-              <div style={{ fontSize: 12, color: '#6b7c6b', marginBottom: 6 }}>URL do Webhook (configure na Z-API)</div>
+              <div style={{ fontSize: 12, color: '#6b7c6b', marginBottom: 6 }}>URL do Webhook (configure no Meta for Developers)</div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <code style={{ flex: 1, color: '#4ade80', fontSize: 13, wordBreak: 'break-all' }}>
                   {webhookStatus?.webhook_url || 'Carregando...'}
@@ -825,10 +826,10 @@ export default function Dashboard() {
             </button>
             {webhookStatus && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <StatusItem ok={webhookStatus.zapi_connected} label="Z-API conectada ao WhatsApp"
-                  detail={webhookStatus.zapi_phone ? `Número: ${webhookStatus.zapi_phone}` : webhookStatus.zapi_error || webhookStatus.zapi_status} />
-                <StatusItem ok={!!webhookStatus.zapi_instance && webhookStatus.zapi_instance !== 'não configurado'}
-                  label="ZAPI_INSTANCE_ID configurado" detail={webhookStatus.zapi_instance} />
+                <StatusItem ok={webhookStatus.meta_connected} label="Meta Cloud API — WhatsApp Business"
+                  detail={webhookStatus.meta_phone ? `Número: ${webhookStatus.meta_phone}${webhookStatus.meta_name ? ` (${webhookStatus.meta_name})` : ''}` : webhookStatus.meta_error || 'Não conectado'} />
+                <StatusItem ok={!!webhookStatus.meta_phone_number_id && webhookStatus.meta_phone_number_id !== 'não configurado'}
+                  label="WHATSAPP_PHONE_NUMBER_ID configurado" detail={webhookStatus.meta_phone_number_id} />
                 <StatusItem ok={webhookStatus.messages_24h !== null} label="Supabase acessível"
                   detail={webhookStatus.messages_24h !== null ? `${webhookStatus.messages_24h} mensagens nas últimas 24h` : 'Erro de conexão'} />
                 <StatusItem ok={webhookStatus.leads_today !== null} label="Leads ativos hoje"
@@ -849,62 +850,71 @@ export default function Dashboard() {
               <div style={{ color: '#6b7c6b', padding: 20 }}>Carregando configurações...</div>
             ) : (
               <>
-                {/* ── Seção Z-API ─────────────────────── */}
-                <Section title="Z-API — WhatsApp">
-                  <FieldRow label="Instance ID (Client ID)">
+                {/* ── Seção Meta Cloud API ────────────── */}
+                <Section title="Meta Cloud API — WhatsApp Official">
+                  <FieldRow label="Phone Number ID">
                     <input
                       type="text"
-                      value={cfgForm.zapi_instance_id}
-                      onChange={e => setCfgForm(p => ({ ...p, zapi_instance_id: e.target.value }))}
-                      placeholder="Ex: 3F0C30F3B41441EDB3496EB5514D2922"
+                      value={cfgForm.meta_phone_number_id}
+                      onChange={e => setCfgForm(p => ({ ...p, meta_phone_number_id: e.target.value }))}
+                      placeholder={cfgSettings?.meta_phone_number_id_info.set ? cfgSettings.meta_phone_number_id : 'Ex: 123456789012345'}
                       style={inputStyle}
                     />
-                    {cfgSettings && <KeyStatus info={cfgSettings.zapi_instance_source} />}
-                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>Encontrado em: Z-API dashboard → sua instância → aba Início</div>
+                    {cfgSettings && <KeyStatus info={cfgSettings.meta_phone_number_id_info} />}
+                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
+                      Meta for Developers → seu App → WhatsApp → API Setup → <strong style={{color:'#6b7c6b'}}>Phone number ID</strong>
+                    </div>
                   </FieldRow>
-                  <FieldRow label="Token">
+                  <FieldRow label="Access Token (permanente)">
                     <input
                       type="password"
-                      value={cfgForm.zapi_token}
-                      onChange={e => setCfgForm(p => ({ ...p, zapi_token: e.target.value }))}
-                      placeholder={cfgSettings?.zapi_token_info.set ? '••••••••  (já configurado — cole para alterar)' : 'Token da instância Z-API'}
+                      value={cfgForm.meta_access_token}
+                      onChange={e => setCfgForm(p => ({ ...p, meta_access_token: e.target.value }))}
+                      placeholder={cfgSettings?.meta_access_token_info.set ? '••••••••  (já configurado — cole para alterar)' : 'Token de sistema permanente'}
                       style={inputStyle}
                     />
-                    {cfgSettings && <KeyStatus info={cfgSettings.zapi_token_info} />}
-                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>É o código depois de <code style={{color:'#6b7c6b'}}>/token/</code> na URL da instância</div>
+                    {cfgSettings && <KeyStatus info={cfgSettings.meta_access_token_info} />}
+                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
+                      Meta Business → Configurações → Usuários do sistema → gere um token permanente com permissão <code style={{color:'#6b7c6b'}}>whatsapp_business_messaging</code>
+                    </div>
                   </FieldRow>
-                  <FieldRow label="Security Token (opcional)">
+                  <FieldRow label="Verify Token (webhook)">
                     <input
-                      type="password"
-                      value={cfgForm.zapi_client_token}
-                      onChange={e => setCfgForm(p => ({ ...p, zapi_client_token: e.target.value }))}
-                      placeholder={cfgSettings?.zapi_client_token_info.set ? '••••••••  (já configurado — cole para alterar)' : 'Deixe em branco se não usar'}
+                      type="text"
+                      value={cfgForm.meta_verify_token}
+                      onChange={e => setCfgForm(p => ({ ...p, meta_verify_token: e.target.value }))}
+                      placeholder={cfgSettings?.meta_verify_token || 'spin-agent-verify'}
                       style={inputStyle}
                     />
-                    {cfgSettings && <KeyStatus info={cfgSettings.zapi_client_token_info} />}
-                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>Z-API dashboard → sua instância → aba <strong style={{color:'#6b7c6b'}}>Segurança</strong> → Security Token. NÃO é a URL da API.</div>
+                    {cfgSettings && <KeyStatus info={cfgSettings.meta_verify_token_info} />}
+                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
+                      String personalizada que você cria. Use este mesmo valor ao configurar o webhook no Meta for Developers.
+                    </div>
                   </FieldRow>
 
-                  {/* Botões Z-API */}
+                  {/* Botões Meta */}
                   <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <button onClick={testZapi} disabled={zapiTesting}
-                      style={{ ...btnStyle('#1a2a3a', '#60a5fa'), padding: '8px 18px', fontSize: 13, opacity: zapiTesting ? 0.6 : 1 }}>
-                      {zapiTesting ? 'Testando...' : '🔌 Testar Conexão'}
+                    <button onClick={testMeta} disabled={metaTesting}
+                      style={{ ...btnStyle('#1a2a3a', '#60a5fa'), padding: '8px 18px', fontSize: 13, opacity: metaTesting ? 0.6 : 1 }}>
+                      {metaTesting ? 'Testando...' : '🔌 Testar Conexão'}
                     </button>
-                    <button onClick={registerWebhook} disabled={zapiRegistering}
-                      style={{ ...btnStyle('#1a3a2a', '#4ade80'), padding: '8px 18px', fontSize: 13, opacity: zapiRegistering ? 0.6 : 1 }}>
-                      {zapiRegistering ? 'Registrando...' : '📡 Registrar Webhook'}
+                    <button onClick={getWebhookInfo}
+                      style={{ ...btnStyle('#1a3a2a', '#4ade80'), padding: '8px 18px', fontSize: 13 }}>
+                      📋 Ver Config Webhook
                     </button>
                   </div>
 
-                  {zapiTestResult && (
-                    <div style={{ marginTop: 10, fontSize: 13, color: zapiTestResult.ok ? '#4ade80' : '#f87171', padding: '8px 12px', background: zapiTestResult.ok ? '#0f2a1a' : '#2a0f0f', borderRadius: 8 }}>
-                      {zapiTestResult.msg}
+                  {metaTestResult && (
+                    <div style={{ marginTop: 10, fontSize: 13, color: metaTestResult.ok ? '#4ade80' : '#f87171', padding: '8px 12px', background: metaTestResult.ok ? '#0f2a1a' : '#2a0f0f', borderRadius: 8 }}>
+                      {metaTestResult.msg}
                     </div>
                   )}
-                  {zapiRegResult && (
-                    <div style={{ marginTop: 10, fontSize: 13, color: zapiRegResult.ok ? '#4ade80' : '#f87171', padding: '8px 12px', background: zapiRegResult.ok ? '#0f2a1a' : '#2a0f0f', borderRadius: 8 }}>
-                      {zapiRegResult.msg}
+                  {webhookInfoResult && (
+                    <div style={{ marginTop: 10, fontSize: 13, padding: '10px 14px', background: '#111820', borderRadius: 8, border: '1px solid #1e3a5f' }}>
+                      <div style={{ color: '#60a5fa', marginBottom: 6 }}>{webhookInfoResult.msg}</div>
+                      {webhookInfoResult.details?.map((step, i) => (
+                        <div key={i} style={{ color: '#9ca3af', fontSize: 12, marginTop: 3 }}>{step}</div>
+                      ))}
                     </div>
                   )}
                 </Section>
