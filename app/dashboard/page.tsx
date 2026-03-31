@@ -156,6 +156,10 @@ export default function Dashboard() {
   const [metaTestResult, setMetaTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [webhookInfoResult, setWebhookInfoResult] = useState<{ ok: boolean; msg: string; details?: string[] } | null>(null)
 
+  // ── QR Code WhatsApp ────────────────────────────────────────
+  const [qrData, setQrData] = useState<{ connected: boolean; phone?: string | null; qr?: string | null; error?: string } | null>(null)
+  const [qrLoading, setQrLoading] = useState(false)
+
   // ── Conversas ───────────────────────────────────────────────
   async function loadConversations() {
     setConvLoading(true)
@@ -367,14 +371,36 @@ export default function Dashboard() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  // ── Carrega QR Code do gateway ──────────────────────────────
+  async function loadQr() {
+    setQrLoading(true)
+    try {
+      const r = await fetch('/api/gateway-qr', { cache: 'no-store' })
+      const d = await r.json()
+      setQrData(d)
+    } catch {
+      setQrData({ connected: false, qr: null, error: 'Erro ao buscar QR' })
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
   useEffect(() => { load() }, [])
 
   useEffect(() => {
     if (tab === 'conversas') loadConversations()
     if (tab === 'prompt') loadPrompt()
     if (tab === 'status') loadStatus()
-    if (tab === 'config') loadConfig()
+    if (tab === 'config') { loadConfig(); loadQr() }
   }, [tab])
+
+  // Polling: atualiza QR a cada 5s quando na aba config e não conectado
+  useEffect(() => {
+    if (tab !== 'config') return
+    if (qrData?.connected) return
+    const interval = setInterval(() => loadQr(), 5000)
+    return () => clearInterval(interval)
+  }, [tab, qrData?.connected])
 
   async function updateStatus(id: string, status: string) {
     await fetch('/api/schedule', {
@@ -850,73 +876,90 @@ export default function Dashboard() {
               <div style={{ color: '#6b7c6b', padding: 20 }}>Carregando configurações...</div>
             ) : (
               <>
-                {/* ── Seção Meta Cloud API ────────────── */}
-                <Section title="Meta Cloud API — WhatsApp Official">
-                  <FieldRow label="Phone Number ID">
-                    <input
-                      type="text"
-                      value={cfgForm.meta_phone_number_id}
-                      onChange={e => setCfgForm(p => ({ ...p, meta_phone_number_id: e.target.value }))}
-                      placeholder={cfgSettings?.meta_phone_number_id_info.set ? cfgSettings.meta_phone_number_id : 'Ex: 123456789012345'}
-                      style={inputStyle}
-                    />
-                    {cfgSettings && <KeyStatus info={cfgSettings.meta_phone_number_id_info} />}
-                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
-                      Meta for Developers → seu App → WhatsApp → API Setup → <strong style={{color:'#6b7c6b'}}>Phone number ID</strong>
-                    </div>
-                  </FieldRow>
-                  <FieldRow label="Access Token (permanente)">
-                    <input
-                      type="password"
-                      value={cfgForm.meta_access_token}
-                      onChange={e => setCfgForm(p => ({ ...p, meta_access_token: e.target.value }))}
-                      placeholder={cfgSettings?.meta_access_token_info.set ? '••••••••  (já configurado — cole para alterar)' : 'Token de sistema permanente'}
-                      style={inputStyle}
-                    />
-                    {cfgSettings && <KeyStatus info={cfgSettings.meta_access_token_info} />}
-                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
-                      Meta Business → Configurações → Usuários do sistema → gere um token permanente com permissão <code style={{color:'#6b7c6b'}}>whatsapp_business_messaging</code>
-                    </div>
-                  </FieldRow>
-                  <FieldRow label="Verify Token (webhook)">
-                    <input
-                      type="text"
-                      value={cfgForm.meta_verify_token}
-                      onChange={e => setCfgForm(p => ({ ...p, meta_verify_token: e.target.value }))}
-                      placeholder={cfgSettings?.meta_verify_token || 'spin-agent-verify'}
-                      style={inputStyle}
-                    />
-                    {cfgSettings && <KeyStatus info={cfgSettings.meta_verify_token_info} />}
-                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
-                      String personalizada que você cria. Use este mesmo valor ao configurar o webhook no Meta for Developers.
-                    </div>
-                  </FieldRow>
+                {/* ── Seção QR Code WhatsApp ──────────── */}
+                <Section title="WhatsApp — Conectar via QR Code">
 
-                  {/* Botões Meta */}
-                  <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <button onClick={testMeta} disabled={metaTesting}
-                      style={{ ...btnStyle('#1a2a3a', '#60a5fa'), padding: '8px 18px', fontSize: 13, opacity: metaTesting ? 0.6 : 1 }}>
-                      {metaTesting ? 'Testando...' : '🔌 Testar Conexão'}
-                    </button>
-                    <button onClick={getWebhookInfo}
-                      style={{ ...btnStyle('#1a3a2a', '#4ade80'), padding: '8px 18px', fontSize: 13 }}>
-                      📋 Ver Config Webhook
-                    </button>
-                  </div>
-
-                  {metaTestResult && (
-                    <div style={{ marginTop: 10, fontSize: 13, color: metaTestResult.ok ? '#4ade80' : '#f87171', padding: '8px 12px', background: metaTestResult.ok ? '#0f2a1a' : '#2a0f0f', borderRadius: 8 }}>
-                      {metaTestResult.msg}
+                  {/* Status de conexão */}
+                  {qrData?.connected ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', background: '#0f2a1a', border: '1px solid #166534', borderRadius: 12, marginBottom: 16 }}>
+                      <div style={{ width: 14, height: 14, background: '#4ade80', borderRadius: '50%', flexShrink: 0, boxShadow: '0 0 8px #4ade80' }} />
+                      <div>
+                        <div style={{ color: '#4ade80', fontWeight: 600, fontSize: 15 }}>✅ WhatsApp Conectado!</div>
+                        <div style={{ color: '#86efac', fontSize: 13, marginTop: 2 }}>📱 {qrData.phone || 'Número conectado'}</div>
+                        <div style={{ color: '#6b7c6b', fontSize: 11, marginTop: 4 }}>A Isa Santos está online e respondendo automaticamente.</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: '#2a1a0f', border: '1px solid #7c3d00', borderRadius: 10, marginBottom: 16 }}>
+                      <div style={{ width: 12, height: 12, background: '#fb923c', borderRadius: '50%', flexShrink: 0 }} />
+                      <div style={{ color: '#fb923c', fontSize: 13 }}>
+                        {qrData?.error ? `⚠️ ${qrData.error}` : '⏳ Aguardando conexão...'}
+                      </div>
                     </div>
                   )}
-                  {webhookInfoResult && (
-                    <div style={{ marginTop: 10, fontSize: 13, padding: '10px 14px', background: '#111820', borderRadius: 8, border: '1px solid #1e3a5f' }}>
-                      <div style={{ color: '#60a5fa', marginBottom: 6 }}>{webhookInfoResult.msg}</div>
-                      {webhookInfoResult.details?.map((step, i) => (
-                        <div key={i} style={{ color: '#9ca3af', fontSize: 12, marginTop: 3 }}>{step}</div>
-                      ))}
+
+                  {/* QR Code ou instruções */}
+                  {!qrData?.connected && (
+                    <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+
+                      {/* QR Image */}
+                      <div style={{ flexShrink: 0 }}>
+                        {qrData?.qr ? (
+                          <div style={{ background: '#fff', padding: 12, borderRadius: 12, display: 'inline-block' }}>
+                            <img src={qrData.qr} alt="QR Code WhatsApp" style={{ width: 200, height: 200, display: 'block' }} />
+                          </div>
+                        ) : (
+                          <div style={{ width: 224, height: 224, background: '#111', border: '2px dashed #333', borderRadius: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                            {qrLoading ? (
+                              <>
+                                <div style={{ width: 32, height: 32, border: '3px solid #333', borderTop: '3px solid #4ade80', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                                <div style={{ color: '#4b5563', fontSize: 12 }}>Aguardando gateway...</div>
+                              </>
+                            ) : (
+                              <>
+                                <div style={{ fontSize: 32 }}>📱</div>
+                                <div style={{ color: '#4b5563', fontSize: 12, textAlign: 'center', padding: '0 16px' }}>Inicie o gateway para o QR aparecer aqui</div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        <button onClick={loadQr} disabled={qrLoading} style={{ ...btnStyle('#1a2a1a', '#4ade80'), width: '100%', marginTop: 8, padding: '7px 0', fontSize: 12, opacity: qrLoading ? 0.5 : 1 }}>
+                          {qrLoading ? 'Atualizando...' : '🔄 Atualizar QR'}
+                        </button>
+                      </div>
+
+                      {/* Instruções */}
+                      <div style={{ flex: 1, minWidth: 200 }}>
+                        <div style={{ color: '#9ca3af', fontSize: 13, lineHeight: 1.8 }}>
+                          <div style={{ color: '#4ade80', fontWeight: 600, marginBottom: 10, fontSize: 14 }}>Como conectar:</div>
+                          <div><span style={{ color: '#4ade80' }}>1.</span> No terminal, execute:</div>
+                          <div style={{ background: '#0a0a0a', border: '1px solid #222', borderRadius: 6, padding: '6px 10px', margin: '6px 0 10px', fontFamily: 'monospace', fontSize: 12, color: '#86efac' }}>
+                            cd whatsapp-gateway<br/>
+                            npm install<br/>
+                            npm start
+                          </div>
+                          <div><span style={{ color: '#4ade80' }}>2.</span> O QR Code aparece aqui automaticamente.</div>
+                          <div style={{ margin: '6px 0' }}><span style={{ color: '#4ade80' }}>3.</span> Abra o WhatsApp no celular.</div>
+                          <div style={{ margin: '6px 0' }}><span style={{ color: '#4ade80' }}>4.</span> Vá em <strong style={{ color: '#fff' }}>Dispositivos vinculados → Vincular dispositivo</strong>.</div>
+                          <div><span style={{ color: '#4ade80' }}>5.</span> Aponte a câmera para o QR Code acima.</div>
+                          <div style={{ marginTop: 10, color: '#6b7c6b', fontSize: 11 }}>
+                            ⚡ O QR atualiza automaticamente a cada 5 segundos.
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
+
+                  {/* Quando conectado: botão desconectar / reiniciar */}
+                  {qrData?.connected && (
+                    <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                      <button onClick={loadQr} style={{ ...btnStyle('#1a2a1a', '#4ade80'), padding: '8px 18px', fontSize: 13 }}>
+                        🔄 Verificar Status
+                      </button>
+                    </div>
+                  )}
+
+                  <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                 </Section>
 
                 {/* ── Seção Modelo de IA ──────────────── */}

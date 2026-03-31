@@ -132,6 +132,15 @@ app.get('/status', (req, res) => {
   res.json({ connected: isConnected, phone: connectedPhone })
 })
 
+// QR Code em JSON (usado pelo dashboard do Vercel)
+app.get('/qr', (req, res) => {
+  res.json({
+    connected: isConnected,
+    phone: connectedPhone,
+    qr: qrCodeData || null   // base64 da imagem PNG do QR
+  })
+})
+
 // Enviar texto (chamado pelo Vercel)
 app.post('/send-text', async (req, res) => {
   const { phone, message } = req.body
