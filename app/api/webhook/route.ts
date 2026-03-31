@@ -16,6 +16,7 @@ import {
   sendText as sendTextBaileys,
   sendLoteamentoMedia as sendMediaBaileys,
   notifyCorretor as notifyBaileys,
+  markAsRead as markAsReadBaileys,
 } from '@/lib/baileys-gateway'
 
 // Seleciona canal ativo: 'baileys' | 'meta' (padrão: baileys)
@@ -88,6 +89,9 @@ export async function POST(req: NextRequest) {
       }
 
       if (!userText.trim()) return NextResponse.json({ ok: true })
+
+      // Marcar como lido imediatamente (Z-API style)
+      markAsReadBaileys(phone, messageId).catch(() => {})
 
       return await processMessage({ phone, messageId, contactName, userText, mediaType })
     }

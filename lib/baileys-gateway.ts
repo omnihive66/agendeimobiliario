@@ -25,6 +25,15 @@ async function gatewayPost(path: string, body: object) {
   return res.json()
 }
 
+// ─── Marcar mensagem como lida ────────────────────────────────────
+export async function markAsRead(phone: string, messageId: string) {
+  try {
+    await gatewayPost('/mark-read', { phone, messageId })
+  } catch {
+    // silencioso — não crítico
+  }
+}
+
 // ─── Enviar texto ─────────────────────────────────────────────────
 export async function sendText(phone: string, message: string) {
   try {
