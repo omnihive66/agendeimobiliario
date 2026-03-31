@@ -7,9 +7,35 @@ import {
 import { runAgent, analyzeImage } from '@/lib/agent'
 import { transcribeAudioFromBuffer, transcribeAudioFromUrl } from '@/lib/transcribe'
 import {
-  sendText, sendLoteamentoMedia,
-  notifyCorretor, downloadMedia
+  sendText as sendTextMeta,
+  sendLoteamentoMedia as sendMediaMeta,
+  notifyCorretor as notifyMeta,
+  downloadMedia
 } from '@/lib/meta-whatsapp'
+import {
+  sendText as sendTextBaileys,
+  sendLoteamentoMedia as sendMediaBaileys,
+  notifyCorretor as notifyBaileys,
+} from '@/lib/baileys-gateway'
+
+// Seleciona canal ativo: 'baileys' | 'meta' (padrão: baileys)
+async function getActiveChannel(): Promise<'baileys' | 'meta'> {
+  const ch = await getConfig('settings_active_channel')
+  return (ch === 'meta') ? 'meta' : 'baileys'
+}
+
+async function sendText(phone: string, message: string) {
+  const ch = await getActiveChannel()
+  return ch === 'meta' ? sendTextMeta(phone, message) : sendTextBaileys(phone, message)
+}
+async function sendLoteamentoMedia(phone: string) {
+  const ch = await getActiveChannel()
+  return ch === 'meta' ? sendMediaMeta(phone) : sendMediaBaileys(phone)
+}
+async function notifyCorretor(params: Parameters<typeof notifyMeta>[0]) {
+  const ch = await getActiveChannel()
+  return ch === 'meta' ? notifyMeta(params) : notifyBaileys(params)
+}
 
 // Previne processamento duplicado
 const processed = new Set<string>()
@@ -33,99 +59,113 @@ export async function GET(req: NextRequest) {
   return new Response('Forbidden', { status: 403 })
 }
 
-// ─── POST — mensagens recebidas via Meta Cloud API ─────────────
+// ─── POST — mensagens recebidas (Baileys gateway ou Meta Cloud API)
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
 
-    // Meta envolve tudo em entry.changes.value
+    // ── Formato Baileys gateway (source: 'baileys') ────────────
+    if (body?.source === 'baileys') {
+      const { phone, messageId, name: contactName, type: msgType, text, audioBase64, audioMime } = body
+
+      if (!messageId || processed.has(messageId)) return NextResponse.json({ ok: true })
+      processed.add(messageId)
+      setTimeout(() => processed.delete(messageId), 300_000)
+
+      if (!phone) return NextResponse.json({ ok: true })
+
+      let userText = text || ''
+      let mediaType = msgType || 'text'
+
+      if (msgType === 'audio' && audioBase64) {
+        const buffer = Buffer.from(audioBase64, 'base64')
+        const transcription = await transcribeAudioFromBuffer(buffer, audioMime || 'audio/ogg')
+        userText = `[Áudio transcrito]: ${transcription}`
+      } else if (msgType === 'image' && !text) {
+        userText = '[Imagem recebida]'
+      } else if (msgType === 'document') {
+        userText = '[Documento enviado pelo lead]'
+      }
+
+      if (!userText.trim()) return NextResponse.json({ ok: true })
+
+      return await processMessage({ phone, messageId, contactName, userText, mediaType })
+    }
+
+    // ── Formato Meta Cloud API ─────────────────────────────────
     const value = body?.entry?.[0]?.changes?.[0]?.value
     if (!value) return NextResponse.json({ ok: true })
-
-    // Ignora notificações de status (delivered, read, failed)
     if (value.statuses?.length) return NextResponse.json({ ok: true })
-
-    // Precisa ter mensagem
     if (!value.messages?.length) return NextResponse.json({ ok: true })
 
     const msg = value.messages[0]
-    const phone     = msg.from       // ex: "5511999999999"
+    const phone     = msg.from
     const messageId = msg.id
 
-    // Dedup
     if (!messageId || processed.has(messageId)) return NextResponse.json({ ok: true })
     processed.add(messageId)
     setTimeout(() => processed.delete(messageId), 300_000)
 
     if (!phone) return NextResponse.json({ ok: true })
 
-    // Nome do contato (se disponível)
     const contactName: string | undefined = value.contacts?.[0]?.profile?.name
-
-    // ─── Identifica tipo e extrai texto ─────────────────────────
     let userText = ''
     let mediaType = 'text'
     const msgType: string = msg.type || 'text'
 
     if (msgType === 'audio' || msgType === 'voice') {
       mediaType = 'audio'
-      const mediaId: string | undefined = msg.audio?.id || msg.voice?.id
+      const mediaId = msg.audio?.id || msg.voice?.id
       if (mediaId) {
         const downloaded = await downloadMedia(mediaId)
         if (downloaded) {
-          const transcription = await transcribeAudioFromBuffer(
-            downloaded.buffer,
-            downloaded.mimeType
-          )
+          const transcription = await transcribeAudioFromBuffer(downloaded.buffer, downloaded.mimeType)
           userText = `[Áudio transcrito]: ${transcription}`
         } else {
           userText = '[Áudio recebido — não foi possível transcrever]'
         }
-      } else {
-        userText = '[Áudio recebido — não foi possível transcrever]'
       }
     } else if (msgType === 'image') {
       mediaType = 'image'
-      const mediaId: string | undefined = msg.image?.id
+      const mediaId = msg.image?.id
       if (mediaId) {
-        // Obtém URL autenticada para análise com GPT-4o Vision
         const downloaded = await downloadMedia(mediaId)
         if (downloaded) {
-          // Converte para base64 URL para análise
           const base64 = downloaded.buffer.toString('base64')
           const dataUrl = `data:${downloaded.mimeType};base64,${base64}`
-          const description = await analyzeImage(
-            dataUrl,
-            'Descreva brevemente o que você vê nesta imagem em português, em 1-2 frases.'
-          )
+          const description = await analyzeImage(dataUrl, 'Descreva brevemente o que você vê nesta imagem em português, em 1-2 frases.')
           const caption = msg.image?.caption || ''
-          userText = caption
-            ? `[Imagem enviada - ${description}] Legenda: ${caption}`
-            : `[Imagem enviada - ${description}]`
+          userText = caption ? `[Imagem enviada - ${description}] Legenda: ${caption}` : `[Imagem enviada - ${description}]`
         } else {
           userText = '[Imagem recebida]'
         }
-      } else {
-        userText = '[Imagem recebida]'
       }
     } else if (msgType === 'document') {
       mediaType = 'document'
       userText = '[Documento enviado pelo lead]'
-    } else if (msgType === 'text') {
-      userText = msg.text?.body || ''
-    } else if (msgType === 'interactive') {
-      // Botões de resposta e listas
-      userText = msg.interactive?.button_reply?.title ||
-                 msg.interactive?.list_reply?.title ||
-                 '[Interação recebida]'
-    } else if (msgType === 'location') {
-      const { latitude, longitude } = msg.location || {}
-      userText = `[Localização enviada: ${latitude}, ${longitude}]`
     } else {
-      userText = `[Mensagem tipo ${msgType}]`
+      userText = msg.text?.body || msg.interactive?.button_reply?.title || ''
     }
 
     if (!userText.trim()) return NextResponse.json({ ok: true })
+
+    return await processMessage({ phone, messageId, contactName, userText, mediaType })
+
+  } catch (err) {
+    console.error('[Webhook] Erro:', err)
+    return NextResponse.json({ ok: true })
+  }
+}
+
+// ─── Processamento comum de mensagens ────────────────────────────
+async function processMessage({ phone, messageId, contactName, userText, mediaType }: {
+  phone: string
+  messageId: string
+  contactName?: string
+  userText: string
+  mediaType: string
+}) {
+  try {
 
     // ─── Busca ou cria lead ──────────────────────────────────────
     let lead = await getLead(phone)

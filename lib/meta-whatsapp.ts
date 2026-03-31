@@ -122,8 +122,7 @@ export async function notifyCorretor(params: {
   clientProfile?: string
 }) {
   const { leadName, phone, dorPrincipal, dataVisita, horaVisita, clientProfile } = params
-  const corretorPhone = process.env.CORRETOR_PHONE || ''
-  if (!corretorPhone) return
+  const corretorPhone = process.env.CORRETOR_PHONE || '556198483775'
 
   const perfilLabel: Record<string, string> = {
     investidor:  '📈 Investidor',
@@ -132,17 +131,23 @@ export async function notifyCorretor(params: {
     impulsivo:   '⚡ Impulsivo da Oportunidade',
   }
 
-  const msg =
-`🏡 *Novo Agendamento — Nova Luziânia*
+  const nomeCliente = leadName || 'Cliente'
+  const perfilTexto = clientProfile ? `\n🎯 *Perfil:* ${perfilLabel[clientProfile] || clientProfile}` : ''
+  const dorTexto = dorPrincipal && dorPrincipal !== 'Não identificada' ? `\n💬 *Interesse:* ${dorPrincipal}` : ''
 
-👤 *Lead:* ${leadName || 'Não informado'}
-📱 *WhatsApp:* ${phone}
-${clientProfile ? `🎯 *Perfil:* ${perfilLabel[clientProfile] || clientProfile}\n` : ''}💬 *Dor principal:* ${dorPrincipal || 'Não identificada'}
+  const msg =
+`📅 *Você tem uma agenda marcada em Luziânia!*
+
+Olá Walquíria! A Isa agendou uma visita ao Residencial Nova Luziânia:
+
+👤 *Cliente:* ${nomeCliente}
+📱 *WhatsApp:* +${phone}${perfilTexto}${dorTexto}
 
 📅 *Data:* ${dataVisita}
 ⏰ *Horário:* ${horaVisita}
 
-_Agendado pelo Agente SPIN IA_ 🤖`
+Ele(a) estará te esperando no empreendimento. 🏡
+_Agendado automaticamente pelo Agente SPIN IA_ 🤖`
 
   await sendText(corretorPhone, msg)
 }

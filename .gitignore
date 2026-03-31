@@ -31,3 +31,9 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+.env*.local
+
+# WhatsApp Gateway — sessão local (não commitar credenciais)
+whatsapp-gateway/auth_info/
+whatsapp-gateway/node_modules/
