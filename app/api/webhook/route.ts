@@ -5,7 +5,7 @@ import {
   getConfig
 } from '@/lib/supabase'
 import { runAgent, analyzeImage } from '@/lib/agent'
-import { transcribeAudioFromBuffer, transcribeAudioFromUrl } from '@/lib/transcribe'
+import { transcribeAudioFromBuffer } from '@/lib/transcribe'
 import {
   sendText as sendTextMeta,
   sendLoteamentoMedia as sendMediaMeta,
@@ -18,24 +18,40 @@ import {
   notifyCorretor as notifyBaileys,
   markAsRead as markAsReadBaileys,
 } from '@/lib/baileys-gateway'
+import {
+  sendText as sendTextEvo,
+  sendLoteamentoMedia as sendMediaEvo,
+  notifyCorretor as notifyEvo,
+  markAsRead as markAsReadEvo,
+} from '@/lib/evolution-gateway'
 
-// Seleciona canal ativo: 'baileys' | 'meta' (padrão: baileys)
-async function getActiveChannel(): Promise<'baileys' | 'meta'> {
-  const ch = await getConfig('settings_active_channel')
-  return (ch === 'meta') ? 'meta' : 'baileys'
+// Seleciona canal ativo: 'evolution' | 'baileys' | 'meta'
+async function getActiveChannel(): Promise<'evolution' | 'baileys' | 'meta'> {
+  const ch = await getConfig('settings_active_channel').catch(() => null)
+  if (ch === 'meta') return 'meta'
+  if (ch === 'evolution') return 'evolution'
+  return 'baileys'
 }
 
 async function sendText(phone: string, message: string) {
   const ch = await getActiveChannel()
-  return ch === 'meta' ? sendTextMeta(phone, message) : sendTextBaileys(phone, message)
+  if (ch === 'meta') return sendTextMeta(phone, message)
+  if (ch === 'evolution') return sendTextEvo(phone, message)
+  return sendTextBaileys(phone, message)
 }
+
 async function sendLoteamentoMedia(phone: string) {
   const ch = await getActiveChannel()
-  return ch === 'meta' ? sendMediaMeta(phone) : sendMediaBaileys(phone)
+  if (ch === 'meta') return sendMediaMeta(phone)
+  if (ch === 'evolution') return sendMediaEvo(phone)
+  return sendMediaBaileys(phone)
 }
+
 async function notifyCorretor(params: Parameters<typeof notifyMeta>[0]) {
   const ch = await getActiveChannel()
-  return ch === 'meta' ? notifyMeta(params) : notifyBaileys(params)
+  if (ch === 'meta') return notifyMeta(params)
+  if (ch === 'evolution') return notifyEvo(params)
+  return notifyBaileys(params)
 }
 
 // Previne processamento duplicado
@@ -49,7 +65,7 @@ export async function GET(req: NextRequest) {
   const challenge = searchParams.get('hub.challenge')
 
   const verifyToken =
-    (await getConfig('settings_meta_verify_token')) ||
+    (await getConfig('settings_meta_verify_token').catch(() => null)) ||
     process.env.WHATSAPP_VERIFY_TOKEN ||
     'spin-agent-verify'
 
@@ -57,15 +73,59 @@ export async function GET(req: NextRequest) {
     return new Response(challenge || '', { status: 200 })
   }
 
-  return new Response('Forbidden', { status: 403 })
+  // Evolution API — verificação de webhook (retorna 200 sempre)
+  return new Response('ok', { status: 200 })
 }
 
-// ─── POST — mensagens recebidas (Baileys gateway ou Meta Cloud API)
+// ─── POST — mensagens recebidas ───────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
 
-    // ── Formato Baileys gateway (source: 'baileys') ────────────
+    // ── Formato Evolution API ──────────────────────────────────
+    if (body?.event === 'messages.upsert' && body?.data) {
+      const data = body.data
+      if (data?.key?.fromMe) return NextResponse.json({ ok: true })
+
+      const phone     = (data.key?.remoteJid || '').replace('@s.whatsapp.net', '').replace('@g.us', '')
+      const messageId = data.key?.id || ''
+      const name      = data.pushName || undefined
+
+      // ignora grupos
+      if (data.key?.remoteJid?.endsWith('@g.us')) return NextResponse.json({ ok: true })
+      if (!phone || !messageId) return NextResponse.json({ ok: true })
+      if (processed.has(messageId)) return NextResponse.json({ ok: true })
+      processed.add(messageId)
+      setTimeout(() => processed.delete(messageId), 300_000)
+
+      const msgType: string = data.messageType || 'conversation'
+      let userText = ''
+      let mediaType = 'text'
+
+      if (msgType === 'conversation' || msgType === 'extendedTextMessage') {
+        userText = data.message?.conversation || data.message?.extendedTextMessage?.text || ''
+      } else if (msgType === 'audioMessage' || msgType === 'pttMessage') {
+        mediaType = 'audio'
+        userText = '[Áudio recebido]'
+      } else if (msgType === 'imageMessage') {
+        mediaType = 'image'
+        userText = data.message?.imageMessage?.caption || '[Imagem recebida]'
+      } else if (msgType === 'documentMessage') {
+        mediaType = 'document'
+        userText = '[Documento enviado pelo lead]'
+      } else {
+        userText = data.message?.conversation || ''
+      }
+
+      if (!userText.trim()) return NextResponse.json({ ok: true })
+
+      // Marcar como lido
+      markAsReadEvo(phone, messageId).catch(() => {})
+
+      return await processMessage({ phone, messageId, contactName: name, userText, mediaType })
+    }
+
+    // ── Formato Baileys gateway ────────────────────────────────
     if (body?.source === 'baileys') {
       const { phone, messageId, name: contactName, type: msgType, text, audioBase64, audioMime } = body
 
@@ -90,9 +150,7 @@ export async function POST(req: NextRequest) {
 
       if (!userText.trim()) return NextResponse.json({ ok: true })
 
-      // Marcar como lido imediatamente (Z-API style)
       markAsReadBaileys(phone, messageId).catch(() => {})
-
       return await processMessage({ phone, messageId, contactName, userText, mediaType })
     }
 
@@ -152,7 +210,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (!userText.trim()) return NextResponse.json({ ok: true })
-
     return await processMessage({ phone, messageId, contactName, userText, mediaType })
 
   } catch (err) {
@@ -161,7 +218,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// ─── Processamento comum de mensagens ────────────────────────────
+// ─── Processamento comum ──────────────────────────────────────
 async function processMessage({ phone, messageId, contactName, userText, mediaType }: {
   phone: string
   messageId: string
@@ -170,45 +227,31 @@ async function processMessage({ phone, messageId, contactName, userText, mediaTy
   mediaType: string
 }) {
   try {
-
-    // ─── Busca ou cria lead ──────────────────────────────────────
     let lead = await getLead(phone)
-    if (!lead) {
-      lead = await upsertLead(phone, { spin_stage: 'S' })
-    }
+    if (!lead) lead = await upsertLead(phone, { spin_stage: 'S' })
 
-    // Salva nome do contato se ainda não tiver
     if (contactName && !lead.name) {
       await upsertLead(phone, { name: contactName })
       lead = { ...lead, name: contactName }
     }
 
-    // ─── Busca histórico ─────────────────────────────────────────
     const history = await getHistory(phone, 20)
-
-    // ─── Salva mensagem do usuário ───────────────────────────────
     await saveMessage(phone, 'user', userText, mediaType)
-
-    // ─── Roda o agente SPIN ──────────────────────────────────────
     const agentResponse = await runAgent(lead, history, userText)
 
-    // ─── Aplica atualizações de dados ────────────────────────────
     if (Object.keys(agentResponse.updates).length > 0) {
       await upsertLead(phone, agentResponse.updates as any)
       Object.assign(lead, agentResponse.updates)
     }
 
-    // ─── Salva e envia resposta ──────────────────────────────────
     await saveMessage(phone, 'assistant', agentResponse.text, 'text')
     await sendText(phone, agentResponse.text)
 
-    // ─── Envia mídia do loteamento ───────────────────────────────
     if (agentResponse.shouldSendMedia) {
       await new Promise(r => setTimeout(r, 2000))
       await sendLoteamentoMedia(phone)
     }
 
-    // ─── Processa agendamento ────────────────────────────────────
     if (agentResponse.agendamento) {
       try {
         const { data, hora } = agentResponse.agendamento
@@ -238,9 +281,7 @@ async function processMessage({ phone, messageId, contactName, userText, mediaTy
     }
 
     return NextResponse.json({ ok: true })
-
   } catch (err) {
-    // Sempre retorna 200 para evitar retentativas da Meta
     console.error('[Webhook] Erro:', err)
     return NextResponse.json({ ok: true })
   }
